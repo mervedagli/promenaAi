@@ -10,6 +10,9 @@ obj/
 # Üretilen kod haritası: her bilgisayarda "KodHaritasi build" ile yeniden üretilir
 data/
 
+# Otomatik eşitlemenin (RepoSync) uygulamaya ait repo klonları
+repos/
+
 # Makineye özel ayarlar (repo yolları, kaynak adları). Örnek: appsettings.Local.example.json
 appsettings.Local.json
 

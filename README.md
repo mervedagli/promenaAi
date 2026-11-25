@@ -74,6 +74,35 @@ dotnet run
 
 Tarayıcıda `http://localhost:5062` adresini açın.
 
+## Repoların otomatik güncellenmesi (RepoSync)
+
+Açıldığında uygulama, Azure DevOps'taki repoları **kendine ait ayrı bir klasöre** (`kod-analist/repos/`, Git'e
+gönderilmez) klonlar ve belirli aralıklarla izlenen dalın son halini çeker. Kod değiştiyse kod haritasını kendisi
+yeniden üretir; böylece kural kataloğundaki "güncel / kod değişti" durumu da kendiliğinden güncellenir. Ekranın üstünde
+hangi dalın hangi commit'inin kullanıldığı ve son kontrol zamanı görünür; "Şimdi güncelle" düğmesiyle beklemeden güncellenir.
+
+- **Salt okunurdur: hiçbir dala commit atmaz, push yapmaz.** Uygulama yalnızca okuma amaçlı git komutlarını
+  çalıştırabilir (klonlama, çekme, sürüm okuma); klonlarda push adresi geçersiz bir değere ayarlanarak push teknik
+  olarak da engellenir.
+- **Sizin çalışma klasörünüze dokunmaz.** Uygulama her zaman uzak daldaki (ör. `development`) kodu görür, sizin
+  yerel olarak üzerinde çalıştığınız değişiklikleri görmez.
+- Git, bilgisayardaki kayıtlı kimlik bilgisini kullanır (Windows/macOS'ta Git Credential Manager). Bu bilgisayarda
+  `git clone` ile Azure DevOps'tan repo çekebiliyorsanız ek ayar gerekmez. Adrese PAT gömmeyin.
+- İlk açılışta klonlama repoların boyutuna göre birkaç dakika sürebilir; bu sırada ekranda "repolar hazırlanıyor" görünür.
+
+Açmak için `appsettings.Local.json` içinde (örnek: `appsettings.Local.example.json`, "SEÇENEK B"):
+
+```json
+"RepoSync": { "Enabled": true, "Branch": "development", "IntervalMinutes": 15 },
+"Repos": [
+  { "Name": "promena_frontend", "RemoteUrl": "https://dev.azure.com/<kurum>/<proje>/_git/promena_frontend" },
+  { "Name": "ProSourceCore",    "RemoteUrl": "https://dev.azure.com/<kurum>/<proje>/_git/ProSourceCore" },
+  { "Name": "Sourcing",         "RemoteUrl": "https://dev.azure.com/<kurum>/<proje>/_git/Sourcing" }
+]
+```
+
+Durumu model çağırmadan görmek için: `GET /api/sync-status`.
+
 ## Kod haritası (KodHaritasi)
 
 `src/KodHaritasi`, model kullanmadan (API anahtarı ve token gerektirmeden) üç reponun çağrı haritasını çıkarır:

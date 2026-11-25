@@ -11,6 +11,37 @@ public sealed class RepoConfig
 
     /// <summary>Deponun ne içerdiğini anlatan kısa açıklama (modele yol gösterir).</summary>
     public string Description { get; set; } = "";
+
+    /// <summary>
+    /// Uzak repo adresi (ör. Azure DevOps: https://dev.azure.com/kurum/proje/_git/ProSourceCore).
+    /// RepoSync açıksa uygulama bu repoyu kendi klasörüne klonlar ve düzenli olarak günceller.
+    /// </summary>
+    public string? RemoteUrl { get; set; }
+
+    /// <summary>İzlenecek dal; boşsa RepoSync:Branch kullanılır.</summary>
+    public string? Branch { get; set; }
+}
+
+/// <summary>
+/// Repoların otomatik güncellenmesi. Açıkken uygulama repoları kendine ait ayrı bir klasöre klonlar
+/// (geliştiricinin çalışma klasörüne dokunmaz), belirli aralıklarla son hali çeker ve kod değiştiyse
+/// kod haritasını yeniden üretir.
+/// </summary>
+public sealed class RepoSyncOptions
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>Uygulamaya ait klon klasörü (göreli ise proje klasörüne göre). Git'e gönderilmez.</summary>
+    public string BaseDir { get; set; } = "../../repos";
+
+    /// <summary>Varsayılan dal (repo bazında Repos[i].Branch ile değiştirilebilir).</summary>
+    public string Branch { get; set; } = "development";
+
+    /// <summary>Kaç dakikada bir güncelleme kontrolü yapılacağı.</summary>
+    public int IntervalMinutes { get; set; } = 15;
+
+    /// <summary>KodHaritasi projesinin klasörü (göreli ise proje klasörüne göre).</summary>
+    public string CodeMapToolProject { get; set; } = "../KodHaritasi";
 }
 
 /// <summary>Microsoft Foundry üzerindeki Claude bağlantı ayarları.</summary>

@@ -99,6 +99,10 @@
     }
     #approve textarea { min-height: 60px; resize: vertical; }
     button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .sync-status { font-size: 12px; color: var(--muted); margin: -16px 0 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .sync-status:empty { display: none; }
+    .sync-status .err { color: var(--error); }
+    .sync-status button { padding: 3px 10px; font-size: 12px; }
     .fast-mode { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--muted); cursor: pointer; }
     .fast-mode input { margin-top: 3px; }
     details.tech { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; color: var(--muted); }
@@ -109,6 +113,7 @@
 <main>
   <h1>Kod Analist</h1>
   <p class="subtitle">İş kurallarını sorun; cevaplar kaynak kod incelenerek, sade bir dille ve örneklerle verilir.</p>
+  <div id="syncStatus" class="sync-status"></div>
 
   <div class="panel">
     <div class="filters">
@@ -156,6 +161,39 @@
     for (const s of data.scopes) scopeEl.add(new Option(s.label, s.id));
     for (const t of data.topics) topicEl.add(new Option(t.label, t.id));
   }).catch(() => { /* liste yüklenemezse kapsam olmadan çalışır */ });
+
+  // Repoların otomatik güncellenme durumu (RepoSync açıksa görünür).
+  const syncEl = document.getElementById("syncStatus");
+  function timeAgo(iso) {
+    if (!iso) return "—";
+    const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (min < 1) return "az önce";
+    if (min < 60) return `${min} dk önce`;
+    return `${Math.round(min / 60)} saat önce`;
+  }
+  async function loadSyncStatus() {
+    try {
+      const s = await fetch("/api/sync-status").then((r) => r.json());
+      if (!s.enabled) { syncEl.innerHTML = ""; return; }
+      const repos = s.repos.map((r) =>
+        r.error
+          ? `<span class="err" title="${escapeHtml(r.error)}">${escapeHtml(r.name)}: güncellenemedi</span>`
+          : `<span title="Son değişiklik: ${timeAgo(r.lastChangeAt)}">${escapeHtml(r.name)} (${escapeHtml(r.branch)} · ${escapeHtml(r.commit || "—")})</span>`
+      ).join(" · ");
+      const lastCheck = s.repos.map((r) => r.lastCheckAt).filter(Boolean).sort().pop();
+      syncEl.innerHTML =
+        `<span>Kod: ${repos || "repolar hazırlanıyor…"}</span>` +
+        `<span>· son kontrol ${timeAgo(lastCheck)}</span>` +
+        (s.mapError ? `<span class="err">· ${escapeHtml(s.mapError)}</span>` : "") +
+        (s.running ? `<span>· güncelleniyor…</span>` : `<button class="secondary" id="syncNowBtn">Şimdi güncelle</button>`);
+      document.getElementById("syncNowBtn")?.addEventListener("click", async () => {
+        await fetch("/api/sync-now", { method: "POST" });
+        setTimeout(loadSyncStatus, 1000);
+      });
+    } catch { syncEl.innerHTML = ""; }
+  }
+  loadSyncStatus();
+  setInterval(loadSyncStatus, 30000);
 
   fetch("/api/catalog/status").then((r) => r.json()).then((s) => {
     catalogEnabled = s.configured;

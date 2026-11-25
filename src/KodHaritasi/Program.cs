@@ -4,6 +4,7 @@ using KodHaritasi;
 
 // Kullanım:
 //   dotnet run -- build  [--ayarlar ../KodAnalist/appsettings.json] [--harita ../../data/codemap.json]
+//   dotnet run -- build  --repo ProSourceCore=/yol/ProSourceCore --repo Sourcing=/yol/Sourcing   (ayar dosyası yerine)
 //   dotnet run -- trace  "/api/AggregatedAuctionSupplier/SendBid" [--derinlik 4]
 //   dotnet run -- trace  "AuctionBidBaseService.AdvancedSendBid"
 //   dotnet run -- callers "AggregatedAuctionSupplierController.ValidateBidSettings" [--derinlik 3]
@@ -53,7 +54,16 @@ return 0;
 void Build(string settingsFile, string outputFile)
 {
     var sw = Stopwatch.StartNew();
-    var repos = ReadRepos(settingsFile);
+
+    // --repo Ad=Yol verilmişse (ör. KodAnalist'in otomatik eşitlediği klonlar) ayar dosyası yerine onlar kullanılır.
+    var explicitRepos = args
+        .Select((a, i) => (a, i))
+        .Where(x => x.a == "--repo" && x.i + 1 < args.Length)
+        .Select(x => args[x.i + 1].Split('=', 2))
+        .Where(p => p.Length == 2)
+        .Select(p => (p[0], Path.GetFullPath(p[1])))
+        .ToList();
+    var repos = explicitRepos.Count > 0 ? explicitRepos : ReadRepos(settingsFile);
     var map = new CodeMap { GeneratedAt = DateTime.Now };
     var rawMethods = new List<CSharpIndexer.RawMethod>();
 
@@ -90,8 +100,11 @@ void Build(string settingsFile, string outputFile)
     sw.Stop();
     map.Stats.Seconds = sw.Elapsed.TotalSeconds;
 
+    // Önce geçici dosyaya yaz, sonra tek adımda yerine koy: çalışan uygulama yarım yazılmış haritayı okumaz.
     Directory.CreateDirectory(Path.GetDirectoryName(outputFile)!);
-    File.WriteAllText(outputFile, JsonSerializer.Serialize(map, jsonOptions));
+    var tempFile = outputFile + ".tmp";
+    File.WriteAllText(tempFile, JsonSerializer.Serialize(map, jsonOptions));
+    File.Move(tempFile, outputFile, overwrite: true);
     Console.WriteLine($"Harita yazıldı: {outputFile} ({new FileInfo(outputFile).Length / 1024 / 1024.0:F1} MB)");
     Console.WriteLine();
     Console.WriteLine(new Queries(map).StatsText());

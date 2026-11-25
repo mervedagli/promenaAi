@@ -21,15 +21,31 @@ foundry.ApiKey ??= Environment.GetEnvironmentVariable("ANTHROPIC_FOUNDRY_API_KEY
 if (string.IsNullOrWhiteSpace(foundry.ResourceName))
     throw new InvalidOperationException("Foundry:ResourceName ayarı boş. appsettings.Local.json dosyasını doldurun (örnek: appsettings.Local.example.json).");
 
+var repoSync = builder.Configuration.GetSection("RepoSync").Get<RepoSyncOptions>() ?? new RepoSyncOptions();
+var syncBaseDir = Path.GetFullPath(repoSync.BaseDir, builder.Environment.ContentRootPath);
+
 foreach (var repo in repos)
 {
+    if (repoSync.Enabled && !string.IsNullOrWhiteSpace(repo.RemoteUrl))
+    {
+        // Otomatik eşitleme: repo uygulamaya ait klon klasöründen okunur (ilk açılışta arka planda klonlanır).
+        repo.Path = Path.Combine(syncBaseDir, repo.Name);
+        continue;
+    }
+
     // Göreli yollar proje klasörüne (src/KodAnalist) göre çözülür; KodHaritasi da aynı kuralı kullanır.
     repo.Path = Path.GetFullPath(repo.Path, builder.Environment.ContentRootPath);
     if (!Directory.Exists(repo.Path))
         throw new InvalidOperationException(
             $"'{repo.Name}' deposu bulunamadı: {repo.Path}. Yolu appsettings.Local.json dosyasında düzeltin " +
-            "(örnek: appsettings.Local.example.json).");
+            "(örnek: appsettings.Local.example.json) ya da RepoSync ile RemoteUrl tanımlayın.");
 }
+
+builder.Services.AddSingleton(repoSync);
+builder.Services.AddSingleton(repos);
+builder.Services.AddSingleton<RepoSyncStatus>();
+builder.Services.AddSingleton<RepoSyncService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<RepoSyncService>());
 
 builder.Services.AddSingleton(foundry);
 builder.Services.AddSingleton(agentOptions);
@@ -73,6 +89,15 @@ app.MapGet("/api/map/trace", (string target, int? depth, CodeMapService map) => 
 app.MapGet("/api/map/callers", (string target, int? depth, CodeMapService map) => Results.Text(map.Callers(target, depth ?? 4)));
 
 // Soru-cevap: ilerleme adımları ve cevap Server-Sent Events (SSE) ile akıtılır.
+// Repoların otomatik eşitleme durumu ve elle tetikleme.
+app.MapGet("/api/sync-status", (RepoSyncStatus status) => Results.Json(status.Snapshot()));
+app.MapPost("/api/sync-now", (RepoSyncOptions opts, RepoSyncService sync) =>
+{
+    if (!opts.Enabled) return Results.Json(new { error = "Otomatik güncelleme kapalı (RepoSync:Enabled)." }, statusCode: 400);
+    sync.TriggerNow();
+    return Results.Json(new { started = true });
+});
+
 // Ekrandaki ihale tipi ve konu listeleri.
 app.MapGet("/api/scopes", (ScopeService scopes) => new
 {

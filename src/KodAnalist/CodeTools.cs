@@ -218,6 +218,9 @@ public sealed class CodeTools
         return File.Exists(full) ? File.ReadAllLines(full) : null;
     }
 
+    /// <summary>Repolar güncellendiğinde (otomatik eşitleme) dosya listesi önbelleğini temizler.</summary>
+    public void InvalidateFileCache() => _allFiles = null;
+
     private Lazy<List<(string Repo, string Rel)>>? _allFiles;
     private Lazy<List<(string Repo, string Rel)>> AllFiles => _allFiles ??= new(() =>
         _repos.Values.SelectMany(r =>
