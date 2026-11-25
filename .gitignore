@@ -1,0 +1,19 @@
+# Derleme çıktıları
+bin/
+obj/
+*.user
+.vs/
+.idea/
+.vscode/
+.DS_Store
+
+# Üretilen kod haritası: her bilgisayarda "KodHaritasi build" ile yeniden üretilir
+data/
+
+# Makineye özel ayarlar (repo yolları, kaynak adları). Örnek: appsettings.Local.example.json
+appsettings.Local.json
+
+# Gizli bilgiler kesinlikle repoya girmemeli (anahtarlar user-secrets'ta tutulur)
+*.env
+.env*
+secrets.json

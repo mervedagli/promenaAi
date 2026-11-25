@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kod Analist</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085;
+      --border: #e3e6eb; --accent: #2f5bd3; --accent-text: #ffffff;
+      --code-bg: #f1f3f6; --error: #b42318; --error-bg: #fef3f2;
+      --ok: #067647; --warn: #b54708;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #98a2b3;
+        --border: #2c323c; --accent: #6b8ff0; --accent-text: #0d1117;
+        --code-bg: #252a33; --error: #fda29b; --error-bg: #3a1a17;
+        --ok: #75e0a7; --warn: #fdb022;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .subtitle { color: var(--muted); margin: 0 0 24px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    textarea {
+      width: 100%; min-height: 90px; resize: vertical; padding: 10px 12px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+      font: inherit;
+    }
+    .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1 1 220px; }
+    select {
+      padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font: inherit;
+    }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+    button {
+      background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px;
+      padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    .hint { color: var(--muted); font-size: 13px; }
+    #steps { margin-top: 20px; }
+    #steps:empty { display: none; }
+    #steps summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+    #steps ol { margin: 8px 0 0; padding-left: 22px; color: var(--muted); font-size: 13px; }
+    #steps li { word-break: break-word; }
+    #steps li.phase { list-style: none; margin: 10px 0 4px -22px; color: var(--text); font-weight: 600; }
+    #answer { margin-top: 20px; }
+    #answer:empty { display: none; }
+    #answer h1, #answer h2, #answer h3 { line-height: 1.3; margin: 1.2em 0 .5em; }
+    #answer h1 { font-size: 20px; } #answer h2 { font-size: 18px; } #answer h3 { font-size: 16px; }
+    #answer code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; word-break: break-word; }
+    #answer pre { background: var(--code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; }
+    #answer pre code { padding: 0; }
+    #answer table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+    #answer th, #answer td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+    #answer blockquote { margin: 0; padding: 4px 14px; border-left: 3px solid var(--accent); color: var(--muted); }
+    .error { color: var(--error); background: var(--error-bg); border-radius: 8px; padding: 10px 14px; }
+    .spinner {
+      width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Kural kataloğu */
+    #catalog { margin-top: 16px; }
+    #catalog:empty { display: none; }
+    #catalog h2 { font-size: 15px; margin: 0 0 8px; }
+    .catalog-list { list-style: none; margin: 0; padding: 0; }
+    .catalog-list li {
+      display: flex; gap: 10px; align-items: flex-start; justify-content: space-between;
+      padding: 8px 0; border-top: 1px solid var(--border); cursor: pointer;
+    }
+    .catalog-list li:first-child { border-top: 0; }
+    .catalog-list li.active { background: var(--code-bg); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+    .catalog-list .arrow { color: var(--muted); width: 12px; flex: 0 0 12px; }
+    .close-btn { float: right; padding: 4px 10px; font-size: 12px; margin-left: 8px; }
+    .catalog-list .q { flex: 1; min-width: 0; word-break: break-word; }
+    .catalog-list .meta { color: var(--muted); font-size: 12px; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--border); }
+    .badge.ok { color: var(--ok); border-color: var(--ok); }
+    .badge.stale { color: var(--warn); border-color: var(--warn); }
+    .catalog-header { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .catalog-header ul { margin: 6px 0 0; padding-left: 20px; color: var(--warn); }
+    #approve { margin-top: 12px; }
+    #approve:empty { display: none; }
+    #approve input, #approve textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font: inherit; margin-bottom: 8px;
+    }
+    #approve textarea { min-height: 60px; resize: vertical; }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .fast-mode { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--muted); cursor: pointer; }
+    .fast-mode input { margin-top: 3px; }
+    details.tech { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; color: var(--muted); }
+    details.tech summary { cursor: pointer; font-weight: 600; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Kod Analist</h1>
+  <p class="subtitle">İş kurallarını sorun; cevaplar kaynak kod incelenerek, sade bir dille ve örneklerle verilir.</p>
+
+  <div class="panel">
+    <div class="filters">
+      <label>İhale tipi
+        <select id="scope"><option value="">Tümü (kapsam yok)</option></select>
+      </label>
+      <label>Konu
+        <select id="topic"><option value="">Tümü</option></select>
+      </label>
+    </div>
+    <textarea id="question" placeholder="Örnek: Grup toplamlı ihalede min/max kuralları nelerdir? Teklif verirken validasyonlar hangi sırayla çalışır?"></textarea>
+    <label class="fast-mode">
+      <input type="checkbox" id="fastMode">
+      <span><strong>Hızlı mod</strong> — doğrulama aşaması atlanır, cevap daha kısa sürede gelir. Cevap doğrulanmamış olur
+        ve kataloğa kaydedilemez; hızlı bir fikir edinmek için kullanın, karar vermek için normal modu tercih edin.</span>
+    </label>
+    <div class="actions">
+      <button id="ask">Sor</button>
+      <span id="status" class="hint">Ctrl + Enter ile de gönderebilirsiniz.</span>
+    </div>
+  </div>
+
+  <div id="catalog" class="panel"></div>
+  <div id="steps"></div>
+  <div id="answer"></div>
+  <div id="approve" class="panel"></div>
+</main>
+
+<script>
+  const questionEl = document.getElementById("question");
+  const askBtn = document.getElementById("ask");
+  const statusEl = document.getElementById("status");
+  const stepsEl = document.getElementById("steps");
+  const answerEl = document.getElementById("answer");
+  const scopeEl = document.getElementById("scope");
+  const topicEl = document.getElementById("topic");
+
+  const catalogEl = document.getElementById("catalog");
+  const approveEl = document.getElementById("approve");
+  let catalogEnabled = false;
+  let lastAsk = null;   // { question, scopeId, topicId, answer } — onaylama formu için
+
+  // İhale tipi ve konu listelerini sunucudan yükle.
+  fetch("/api/scopes").then((r) => r.json()).then((data) => {
+    for (const s of data.scopes) scopeEl.add(new Option(s.label, s.id));
+    for (const t of data.topics) topicEl.add(new Option(t.label, t.id));
+  }).catch(() => { /* liste yüklenemezse kapsam olmadan çalışır */ });
+
+  fetch("/api/catalog/status").then((r) => r.json()).then((s) => {
+    catalogEnabled = s.configured;
+    loadCatalog();
+  }).catch(() => {});
+
+  // Katalogdan açılan kayıt (açılır / kapanır). answerFromCatalog: cevap alanında katalog içeriği mi var?
+  let openEntryKey = null;
+  let answerFromCatalog = false;
+
+  // İhale tipi veya konu değişince açık katalog kaydı kapanır ve liste yeni seçime göre yeniden gelir.
+  function onSelectionChange() {
+    closeCatalogEntry();
+    loadCatalog();
+  }
+  scopeEl.addEventListener("change", onSelectionChange);
+  topicEl.addEventListener("change", onSelectionChange);
+
+  function markActiveEntry() {
+    for (const li of catalogEl.querySelectorAll("li[data-key]")) {
+      const active = li.dataset.key === openEntryKey;
+      li.classList.toggle("active", active);
+      const arrow = li.querySelector(".arrow");
+      if (arrow) arrow.textContent = active ? "▾" : "▸";
+    }
+  }
+
+  function closeCatalogEntry() {
+    if (answerFromCatalog) {
+      answerEl.className = "";
+      answerEl.innerHTML = "";
+      approveEl.innerHTML = "";
+      statusEl.textContent = "";
+    }
+    answerFromCatalog = false;
+    openEntryKey = null;
+    markActiveEntry();
+  }
+
+  function toggleCatalogEntry(scopeId, id) {
+    if (openEntryKey === `${scopeId}|${id}`) closeCatalogEntry();
+    else openCatalogEntry(scopeId, id);
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s ?? "";
+    return d.innerHTML;
+  }
+
+  function formatDate(iso) {
+    try { return new Date(iso).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" }); }
+    catch { return iso; }
+  }
+
+  // Seçili ihale tipi / konudaki onaylı kurallar. Model çağrılmaz; tıklanınca anında açılır.
+  async function loadCatalog() {
+    if (!catalogEnabled) { catalogEl.innerHTML = ""; return; }
+    const params = new URLSearchParams();
+    if (scopeEl.value) params.set("scope", scopeEl.value);
+    if (topicEl.value) params.set("topic", topicEl.value);
+    try {
+      const res = await fetch("/api/catalog?" + params);
+      const data = await res.json();
+      if (!res.ok) { catalogEl.innerHTML = `<div class="hint">${escapeHtml(data.error)}</div>`; return; }
+      if (data.length === 0) {
+        catalogEl.innerHTML = '<div class="hint">Bu seçimde kataloğa kaydedilmiş onaylı kural yok. Sorunuzu sorun; cevabı onaylarsanız buraya eklenir.</div>';
+        return;
+      }
+      catalogEl.innerHTML = `<h2>Onaylı kurallar (${data.length}) — tıklayınca model çağrılmadan açılır, tekrar tıklayınca kapanır</h2><ul class="catalog-list"></ul>`;
+      const list = catalogEl.querySelector("ul");
+      for (const e of data) {
+        const li = document.createElement("li");
+        li.dataset.key = `${e.scopeId}|${e.id}`;
+        li.innerHTML = `<span class="arrow">▸</span><div class="q">${escapeHtml(e.question)}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}</div></div>` +
+          (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>');
+        li.addEventListener("click", () => toggleCatalogEntry(e.scopeId, e.id));
+        list.appendChild(li);
+      }
+      markActiveEntry();
+    } catch {
+      catalogEl.innerHTML = '<div class="hint">Katalog yüklenemedi.</div>';
+    }
+  }
+
+  async function openCatalogEntry(scopeId, id) {
+    const res = await fetch(`/api/catalog/${encodeURIComponent(scopeId)}/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if (!res.ok) { answerEl.className = "error"; answerEl.textContent = data.error || "Kayıt açılamadı."; return; }
+    const e = data.entry;
+    stepsEl.innerHTML = "";
+    approveEl.innerHTML = "";
+    const status = data.upToDate
+      ? '<span class="badge ok">Kod değişmedi, cevap güncel</span>'
+      : `<span class="badge stale">Kod değişti — yeniden doğrulanmalı</span><ul>${data.changes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`;
+    answerEl.className = "panel";
+    answerEl.innerHTML =
+      `<div class="catalog-header"><button class="secondary close-btn" id="closeEntryBtn">Kapat ✕</button>` +
+      `Katalogdan · ${escapeHtml(e.approvedBy)} tarafından ${formatDate(e.approvedAt)} tarihinde onaylandı · ${status}` +
+      (e.note ? `<div><strong>Not:</strong> ${escapeHtml(e.note)}</div>` : "") + `</div>` +
+      `<p><strong>Soru:</strong> ${escapeHtml(e.question)}</p>` + renderAnswer(e.answer);
+    document.getElementById("closeEntryBtn").addEventListener("click", closeCatalogEntry);
+    answerFromCatalog = true;
+    openEntryKey = `${scopeId}|${id}`;
+    markActiveEntry();
+    statusEl.textContent = data.upToDate
+      ? "Katalogdan gösterildi; model çağrılmadı, token harcanmadı."
+      : "Katalogdan gösterildi. Kod değiştiği için yeniden inceleyip cevabı tekrar onaylamanız önerilir.";
+    questionEl.value = e.question;
+
+    // Analist isterse aynı soruyu yeniden inceletebilir (yalnızca bu düğmeyle model çalışır).
+    approveEl.innerHTML = `
+      <div class="hint" style="margin-bottom:8px">${data.upToDate
+        ? "Bu cevap onaylı ve dayandığı kod değişmedi. Yine de yeniden incelemek isterseniz model çalışır ve token harcanır."
+        : "Bu cevabın dayandığı kod değişti. Yeniden inceleyip yeni cevabı onaylamanız önerilir."}</div>
+      <button id="reaskBtn" class="${data.upToDate ? "secondary" : ""}">Yeniden incele (model çalışır)</button>`;
+    document.getElementById("reaskBtn").addEventListener("click", () => ask(true));
+  }
+
+  // "Sor" düğmesi: model çağrılmadan önce katalogda aynı / benzer onaylı soru aranır.
+  // Dönüş değeri true ise katalog sonucu gösterildi demektir; model çağrılmaz.
+  async function tryCatalogFirst(question) {
+    if (!catalogEnabled) return false;
+    setBusy(true, "Katalogda aranıyor…");
+    let m;
+    try {
+      const res = await fetch("/api/catalog/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, scopeId: scopeEl.value || null, topicId: topicEl.value || null }),
+      });
+      m = await res.json();
+    } catch {
+      setBusy(false, "");
+      return false;   // katalog erişilemezse normal akışa devam
+    }
+    setBusy(false, "");
+
+    if (m.exact) {
+      await openCatalogEntry(m.exact.scopeId, m.exact.id);
+      return true;
+    }
+    if (m.similar && m.similar.length > 0) {
+      stepsEl.innerHTML = "";
+      approveEl.innerHTML = "";
+      answerEl.className = "panel";
+      answerEl.innerHTML = `<h2 style="font-size:16px;margin-top:0">Bu soruya benzer onaylı kurallar var</h2>
+        <p class="hint">Aradığınız bunlardan biriyse tıklayın; model çağrılmadan açılır.</p>
+        <ul class="catalog-list"></ul>
+        <button id="newAskBtn" class="secondary" style="margin-top:12px">Hiçbiri değil, yeni inceleme başlat (model çalışır)</button>`;
+      const list = answerEl.querySelector("ul");
+      for (const e of m.similar) {
+        const li = document.createElement("li");
+        li.innerHTML = `<div class="q">${escapeHtml(e.question)}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)} · benzerlik %${Math.round(e.score * 100)}</div></div>` +
+          (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>');
+        li.addEventListener("click", () => openCatalogEntry(e.scopeId, e.id));
+        list.appendChild(li);
+      }
+      document.getElementById("newAskBtn").addEventListener("click", () => ask(true));
+      statusEl.textContent = "Katalogda benzer kurallar bulundu; model çağrılmadı.";
+      answerFromCatalog = true;   // seçim değişirse bu öneri listesi de temizlenir
+      openEntryKey = null;
+      markActiveEntry();
+      return true;
+    }
+    return false;
+  }
+
+  // Yapay zekânın cevabının altında: onaylayıp kataloğa kaydetme formu.
+  function showApproveForm() {
+    if (!catalogEnabled || !lastAsk) { approveEl.innerHTML = ""; return; }
+    approveEl.innerHTML = `
+      <div class="hint" style="margin-bottom:8px">Cevabı kontrol ettiyseniz kataloğa kaydedin. Aynı soru tekrar sorulduğunda model çağrılmadan bu cevap gösterilir; dayandığı kod değişirse "kod değişti" olarak işaretlenir.</div>
+      <input id="approvedBy" placeholder="Adınız (zorunlu)" maxlength="100">
+      <textarea id="approveNote" placeholder="Not (isteğe bağlı) — ör. düzeltmeler, ekibe bildirilen hatalar"></textarea>
+      <button id="approveBtn">Onayla ve kataloğa kaydet</button>
+      <span id="approveStatus" class="hint"></span>`;
+    document.getElementById("approveBtn").addEventListener("click", saveToCatalog);
+  }
+
+  async function saveToCatalog() {
+    const approvedBy = document.getElementById("approvedBy").value.trim();
+    const note = document.getElementById("approveNote").value.trim();
+    const statusSpan = document.getElementById("approveStatus");
+    if (!approvedBy) { statusSpan.textContent = "Lütfen adınızı yazın."; return; }
+    const btn = document.getElementById("approveBtn");
+    btn.disabled = true;
+    statusSpan.textContent = "Kaydediliyor…";
+    try {
+      const res = await fetch("/api/catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...lastAsk, approvedBy, note }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.status);
+      statusSpan.textContent = `Kaydedildi (${data.sources} kod dayanağı izleniyor).`;
+      lastAsk = null;
+      loadCatalog();
+    } catch (err) {
+      statusSpan.textContent = "Kaydedilemedi: " + err.message;
+      btn.disabled = false;
+    }
+  }
+
+  function renderMarkdown(md) {
+    return DOMPurify.sanitize(marked.parse(md));
+  }
+
+  // Cevap iki bölümdür: analistin okuyacağı sade dil kısmı ve kod referanslarını içeren "Teknik dayanaklar".
+  // Teknik kısım varsayılan olarak kapalı gösterilir (doğrulama ve katalog takibi için korunur).
+  const TECH_HEADING = /^##\s+Teknik dayanaklar.*$/m;
+  function renderAnswer(md) {
+    const m = md.match(TECH_HEADING);
+    if (!m) return renderMarkdown(md);
+    const analystPart = md.slice(0, m.index).trim();
+    const techPart = md.slice(m.index + m[0].length).trim();
+    return renderMarkdown(analystPart) +
+      `<details class="tech"><summary>Teknik dayanaklar (geliştiriciler için)</summary>${renderMarkdown(techPart)}</details>`;
+  }
+
+  function setBusy(busy, text) {
+    askBtn.disabled = busy;
+    statusEl.innerHTML = busy ? '<span class="spinner"></span> ' + text : text;
+  }
+
+  // force = true: katalog kontrolünü atla, modeli doğrudan çalıştır ("Yeniden incele" / "Hiçbiri değil").
+  async function ask(force) {
+    const question = questionEl.value.trim();
+    if (!question) return;
+    if (force !== true && await tryCatalogFirst(question)) return;
+    const fastMode = document.getElementById("fastMode").checked;
+
+    stepsEl.innerHTML = '<details open><summary>İnceleme adımları</summary><ol></ol></details>';
+    const stepList = stepsEl.querySelector("ol");
+    answerEl.innerHTML = "";
+    approveEl.innerHTML = "";
+    lastAsk = null;
+    answerFromCatalog = false;   // cevap alanı artık yapay zekâ cevabını gösterecek
+    openEntryKey = null;
+    markActiveEntry();
+    setBusy(true, "Kod inceleniyor… Karmaşık sorular birkaç dakika sürebilir.");
+
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          scopeId: scopeEl.value || null,
+          topicId: topicEl.value || null,
+          fastMode,
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error("Sunucu hatası (" + res.status + ")");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let stepCount = 0;
+      let usageText = "";
+      let verifiedRun = true;   // hızlı modda false olur
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sep;
+        while ((sep = buffer.indexOf("\n\n")) >= 0) {
+          const chunk = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          if (!chunk.startsWith("data: ")) continue;
+          const evt = JSON.parse(chunk.slice(6));
+
+          if (evt.Type === "step") {
+            const li = document.createElement("li");
+            li.textContent = evt.Text;
+            stepList.appendChild(li);
+            stepCount++;
+          } else if (evt.Type === "phase") {
+            const li = document.createElement("li");
+            li.className = "phase";
+            li.textContent = evt.Text;
+            stepList.appendChild(li);
+            setBusy(true, evt.Text + "… (Adımlar ve süre aşağıda görünür.)");
+          } else if (evt.Type === "draft") {
+            // Doğrulama sürerken taslağı göster; onay formu yalnızca doğrulanmış son halde çıkar.
+            answerEl.className = "panel";
+            answerEl.innerHTML =
+              '<div class="catalog-header"><span class="badge stale">Taslak — doğrulanıyor</span> ' +
+              'Bu cevap henüz koda karşı doğrulanmadı; son hali birkaç dakika içinde burada yerini alacak.</div>' +
+              renderAnswer(evt.Text);
+            stepsEl.querySelector("details").open = false;
+          } else if (evt.Type === "answer-unverified") {
+            // Hızlı mod: doğrulanmamış cevap. Onay formu gösterilmez; kataloğa kaydedilemez.
+            answerEl.className = "panel";
+            answerEl.innerHTML =
+              '<div class="catalog-header"><span class="badge stale">Hızlı mod — doğrulanmadı</span> ' +
+              'Bu cevap koda karşı doğrulanmadı ve yanlış ya da eksik bilgi içerebilir. Karar vermeden önce hızlı modu ' +
+              'kapatıp yeniden sorun; doğrulanmış cevabı onaylayıp kataloğa kaydedebilirsiniz.</div>' +
+              renderAnswer(evt.Text);
+            stepsEl.querySelector("details").open = false;
+            approveEl.innerHTML = "";
+            verifiedRun = false;
+          } else if (evt.Type === "answer") {
+            answerEl.className = "panel";
+            answerEl.innerHTML = renderAnswer(evt.Text);
+            stepsEl.querySelector("details").open = false;
+            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text };
+            showApproveForm();
+          } else if (evt.Type === "usage") {
+            usageText = evt.Text;
+          } else if (evt.Type === "error") {
+            answerEl.className = "error";
+            answerEl.textContent = evt.Text;
+          }
+        }
+      }
+      setBusy(false, stepCount + (verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (hızlı mod, doğrulanmadı).") +
+        (usageText ? " " + usageText : ""));
+    } catch (err) {
+      answerEl.className = "error";
+      answerEl.textContent = "Bağlantı hatası: " + err.message;
+      setBusy(false, "");
+    }
+  }
+
+  askBtn.addEventListener("click", () => ask(false));
+  questionEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask(false);
+  });
+</script>
+</body>
+</html>

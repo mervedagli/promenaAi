@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>678f4675-54ba-4db9-9230-a36c1a86a92a</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="13.13.0" />
+    <PackageReference Include="Anthropic.Foundry" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.64.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <!-- Kod haritası: veri modeli ve sorgular KodHaritasi projesiyle ortak kullanılır. -->
+  <ItemGroup>
+    <Compile Include="..\KodHaritasi\Model.cs" Link="KodHaritasi\Model.cs" />
+    <Compile Include="..\KodHaritasi\Queries.cs" Link="KodHaritasi\Queries.cs" />
+  </ItemGroup>
+
+</Project>
