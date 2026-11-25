@@ -82,6 +82,14 @@
     }
     .catalog-list li:first-child { border-top: 0; }
     .catalog-list li.active { background: var(--code-bg); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+    .catalog-top { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+    .catalog-top h2 { margin: 0; flex: 1 1 260px; }
+    .catalog-top input {
+      flex: 1 1 240px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+    }
+    .catalog-list .snippet { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .catalog-list mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
     .catalog-list .arrow { color: var(--muted); width: 12px; flex: 0 0 12px; }
     .close-btn { float: right; padding: 4px 10px; font-size: 12px; margin-left: 8px; }
     .catalog-list .q { flex: 1; min-width: 0; word-break: break-word; }
@@ -249,33 +257,79 @@
     catch { return iso; }
   }
 
-  // Seçili ihale tipi / konudaki onaylı kurallar. Model çağrılmaz; tıklanınca anında açılır.
+  // Katalog paneli: üstte arama kutusu (bir kez oluşturulur), altta liste.
+  let catalogSearchTimer = null;
+  function ensureCatalogShell() {
+    if (document.getElementById("catalogSearch")) return;
+    catalogEl.innerHTML = `
+      <div class="catalog-top">
+        <h2 id="catalogTitle">Onaylı kurallar</h2>
+        <input id="catalogSearch" type="search" placeholder="Onaylı kurallarda ara (soru, cevap, not)…" autocomplete="off">
+      </div>
+      <div id="catalogBody"></div>`;
+    document.getElementById("catalogSearch").addEventListener("input", () => {
+      clearTimeout(catalogSearchTimer);
+      catalogSearchTimer = setTimeout(loadCatalog, 300);
+    });
+  }
+
+  // Aranan kelimeleri alıntıda vurgular (metin önce güvenli hale getirilir).
+  function highlight(text, query) {
+    let html = escapeHtml(text);
+    const terms = query.toLocaleLowerCase("tr-TR").split(/\s+/).filter((t) => t.length > 1);
+    for (const t of terms) {
+      const re = new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+      html = html.replace(re, (m) => `<mark>${m}</mark>`);
+    }
+    return html;
+  }
+
+  // Seçili ihale tipi / konudaki onaylı kurallar; arama kutusu doluysa metin araması yapılır.
+  // Model çağrılmaz; tıklanınca anında açılır.
   async function loadCatalog() {
     if (!catalogEnabled) { catalogEl.innerHTML = ""; return; }
+    ensureCatalogShell();
+    const titleEl = document.getElementById("catalogTitle");
+    const bodyEl = document.getElementById("catalogBody");
+    const query = document.getElementById("catalogSearch").value.trim();
+
     const params = new URLSearchParams();
     if (scopeEl.value) params.set("scope", scopeEl.value);
     if (topicEl.value) params.set("topic", topicEl.value);
+    if (query) params.set("q", query);
+    const where = scopeEl.value || topicEl.value ? "bu seçimde" : "tüm katalogda";
+
     try {
-      const res = await fetch("/api/catalog?" + params);
+      const res = await fetch((query ? "/api/catalog/search?" : "/api/catalog?") + params);
       const data = await res.json();
-      if (!res.ok) { catalogEl.innerHTML = `<div class="hint">${escapeHtml(data.error)}</div>`; return; }
+      if (!res.ok) { titleEl.textContent = "Onaylı kurallar"; bodyEl.innerHTML = `<div class="hint">${escapeHtml(data.error)}</div>`; return; }
+
       if (data.length === 0) {
-        catalogEl.innerHTML = '<div class="hint">Bu seçimde kataloğa kaydedilmiş onaylı kural yok. Sorunuzu sorun; cevabı onaylarsanız buraya eklenir.</div>';
+        titleEl.textContent = "Onaylı kurallar";
+        bodyEl.innerHTML = query
+          ? `<div class="hint">"${escapeHtml(query)}" ${where} bulunamadı.${scopeEl.value || topicEl.value ? " İhale tipi / konu seçimini \"Tümü\" yaparak tüm katalogda arayabilirsiniz." : ""}</div>`
+          : '<div class="hint">Bu seçimde kataloğa kaydedilmiş onaylı kural yok. Sorunuzu sorun; cevabı onaylarsanız buraya eklenir.</div>';
         return;
       }
-      catalogEl.innerHTML = `<h2>Onaylı kurallar (${data.length}) — tıklayınca model çağrılmadan açılır, tekrar tıklayınca kapanır</h2><ul class="catalog-list"></ul>`;
-      const list = catalogEl.querySelector("ul");
+
+      titleEl.textContent = query
+        ? `"${query}" için ${data.length} sonuç (${where}) — tıklayınca açılır`
+        : `Onaylı kurallar (${data.length}) — tıklayınca model çağrılmadan açılır, tekrar tıklayınca kapanır`;
+      bodyEl.innerHTML = '<ul class="catalog-list"></ul>';
+      const list = bodyEl.querySelector("ul");
       for (const e of data) {
         const li = document.createElement("li");
         li.dataset.key = `${e.scopeId}|${e.id}`;
-        li.innerHTML = `<span class="arrow">▸</span><div class="q">${escapeHtml(e.question)}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}</div></div>` +
+        const question = query ? highlight(e.question, query) : escapeHtml(e.question);
+        const snippet = query && e.snippet ? `<div class="snippet">${highlight(e.snippet, query)}</div>` : "";
+        li.innerHTML = `<span class="arrow">▸</span><div class="q">${question}${snippet}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}</div></div>` +
           (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>');
         li.addEventListener("click", () => toggleCatalogEntry(e.scopeId, e.id));
         list.appendChild(li);
       }
       markActiveEntry();
     } catch {
-      catalogEl.innerHTML = '<div class="hint">Katalog yüklenemedi.</div>';
+      bodyEl.innerHTML = '<div class="hint">Katalog yüklenemedi.</div>';
     }
   }
 

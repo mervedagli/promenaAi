@@ -199,6 +199,45 @@ app.MapPost("/api/catalog", async (SaveCatalogRequest req, CatalogService catalo
     }
 });
 
+// Katalogda metin araması (soru, cevap, not, onaylayan). Model kullanılmaz. Seçili ihale tipi / konu varsa
+// onların içinde, yoksa tüm katalogda aranır. Aranan kelimelerin hepsi geçmelidir.
+app.MapGet("/api/catalog/search", async (string q, string? scope, string? topic, CatalogService catalog,
+    SourceTracker tracker, ILogger<Program> logger, CancellationToken ct) =>
+{
+    if (!catalog.IsConfigured) return Results.Json(new { error = "Katalog yapılandırılmadı." }, statusCode: 503);
+    var terms = QuestionMatcher.SearchTerms(q ?? "");
+    if (terms.Count == 0) return Results.Json(Array.Empty<object>());
+    try
+    {
+        var entries = await catalog.ListAsync(string.IsNullOrEmpty(scope) ? null : scope, topic, ct);
+        var results = entries
+            .Select(e => (Entry: e, Text: $"{e.Question}\n{e.Answer}\n{e.Note}\n{e.ApprovedBy}"))
+            .Where(x => QuestionMatcher.ContainsAllTerms(x.Text, terms))
+            // Sorusunda geçenler önce gelir.
+            .OrderByDescending(x => QuestionMatcher.ContainsAllTerms(x.Entry.Question, terms))
+            .ThenByDescending(x => x.Entry.ApprovedAt)
+            .Take(50)
+            .Select(x =>
+            {
+                var f = tracker.Check(x.Entry);
+                return new
+                {
+                    x.Entry.Id, x.Entry.ScopeId, x.Entry.TopicId, x.Entry.Question, x.Entry.ApprovedBy, x.Entry.ApprovedAt,
+                    f.UpToDate, f.Changes,
+                    snippet = QuestionMatcher.ContainsAllTerms(x.Entry.Question, terms)
+                        ? null
+                        : QuestionMatcher.Snippet($"{x.Entry.Answer}\n{x.Entry.Note}", terms),
+                };
+            });
+        return Results.Json(results);
+    }
+    catch (Exception ex) when (ex is CosmosException or InvalidOperationException or Azure.Identity.AuthenticationFailedException)
+    {
+        logger.LogError(ex, "Katalogda arama yapılamadı");
+        return Results.Json(new { error = "Kataloğa erişilemedi. Ayrıntılar sunucu loglarında." }, statusCode: 502);
+    }
+});
+
 // "Sor" düğmesine basıldığında, modeli çağırmadan ÖNCE katalogda aynı veya benzer onaylı soru aranır.
 // Aynı ihale tipi içinde aranır; konu seçildiyse o konudakiler ve konusu belirtilmemiş kayıtlar dahil edilir.
 app.MapPost("/api/catalog/match", async (CatalogMatchRequest req, CatalogService catalog, SourceTracker tracker,

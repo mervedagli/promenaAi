@@ -222,6 +222,38 @@ public static partial class QuestionMatcher
 
     public static bool IsSame(string a, string b) => Normalize(a) == Normalize(b);
 
+    /// <summary>
+    /// Katalog metin araması: aranan kelimelerin HEPSİ metinde geçmeli (büyük/küçük harf, ı/i ve noktalama farkı yok sayılır).
+    /// </summary>
+    public static bool ContainsAllTerms(string text, IReadOnlyList<string> normalizedTerms)
+    {
+        var normalized = Normalize(text);
+        return normalizedTerms.All(t => normalized.Contains(t, StringComparison.Ordinal));
+    }
+
+    public static List<string> SearchTerms(string query) =>
+        Normalize(query).Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(t => t.Length > 1).Distinct().ToList();
+
+    /// <summary>Metinde ilk eşleşmenin çevresinden kısa bir alıntı (ekranda gösterilir).</summary>
+    public static string? Snippet(string text, IReadOnlyList<string> normalizedTerms, int radius = 90)
+    {
+        // Normalize, ı→i ve küçültme dışında karakter sayısını korumadığı için eşleşmeyi orijinal metinde
+        // Türkçe kültürüyle büyük/küçük harf duyarsız arıyoruz.
+        var compare = Tr.CompareInfo;
+        foreach (var term in normalizedTerms)
+        {
+            var index = compare.IndexOf(text, term, System.Globalization.CompareOptions.IgnoreCase);
+            if (index < 0) index = compare.IndexOf(text, term.Replace('i', 'ı'), System.Globalization.CompareOptions.IgnoreCase);
+            if (index < 0) continue;
+            var start = Math.Max(0, index - radius);
+            var end = Math.Min(text.Length, index + term.Length + radius);
+            // Markdown işaretlerini (#, *, `, >, |) alıntıdan temizle.
+            var snippet = Spaces().Replace(Regex.Replace(text[start..end], @"[#*`>|]+", " "), " ").Trim();
+            return (start > 0 ? "… " : "") + snippet + (end < text.Length ? " …" : "");
+        }
+        return null;
+    }
+
     /// <summary>0-1 arası benzerlik (Jaccard): ortak anlamlı kelime / toplam anlamlı kelime.</summary>
     public static double Similarity(string a, string b)
     {
