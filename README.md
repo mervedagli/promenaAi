@@ -15,6 +15,19 @@ analiste sade dille ve örneklerle anlatılır, kod referansları ekranda kapal�
 4. Analist cevabı kontrol edip onaylarsa cevap kataloğa kaydedilir (her modda; doğrulanmamışsa öyle işaretlenir);
    dayandığı kod değişirse "kod değişti" olarak işaretlenir.
 
+## Bağlantı kopması ve sayfa yenileme
+
+İnceleme sunucuda tarayıcı bağlantısından bağımsız çalışır (`AskJobs.cs`):
+- Bağlantı koparsa (Wi‑Fi, VPN, proxy) ekran aynı incelemeye kendiliğinden yeniden bağlanır ve kaldığı yerden devam eder.
+- Sayfa yenilenirse son inceleme (süren ya da biten) geri gelir. Biten incelemeler 60 dakika saklanır.
+- Olay gelmezken sunucu 15 saniyede bir boş bir satır gönderir; ağ cihazları ve Azure bağlantıyı "boşta" sayıp kesmez.
+- Hiçbir sayfanın bağlı olmadığı inceleme 5 dakika sonra durdurulur (boşuna model maliyeti oluşmaz).
+- Hata mesajı gelmiş taslağı veya cevabı silmez; ayrı bir uyarı olarak gösterilir. Doğrulama aşaması hata verirse taslak
+  "doğrulanmamış" cevap olarak gösterilir.
+- Süren incelemeler bellekte tutulur: sunucu yeniden başlarsa kaybolur (ekran bunu bildirir).
+
+Kopan bir incelemeye bağlanmak için: `GET /api/ask/{id}/stream?after={sıra}`.
+
 ## Cevap modları
 
 Katalogda cevap yoksa modelin ne kadar titiz (ve ne kadar uzun) çalışacağını analist seçer. Seçim tarayıcıda hatırlanır.

@@ -96,6 +96,8 @@
     #steps li { word-break: break-word; }
     #steps .phase { margin: 10px 0 4px; color: var(--text); font-weight: 600; font-size: 13px; }
     #steps .phase + ol { margin-top: 0; }
+    #notice { margin-top: 20px; }
+    #notice:empty { display: none; }
     #answer { margin-top: 20px; }
     #answer:empty { display: none; }
     #answer h1, #answer h2, #answer h3 { line-height: 1.3; margin: 1.2em 0 .5em; }
@@ -207,6 +209,7 @@
 
   <div id="catalog" class="panel"></div>
   <div id="steps"></div>
+  <div id="notice" class="error" role="alert"></div>
   <div id="answer"></div>
   <div id="approve" class="panel"></div>
 </main>
@@ -246,6 +249,7 @@
     for (const s of data.scopes) scopeEl.add(new Option(s.label, s.id));
     for (const t of data.topics) topicEl.add(new Option(t.label, t.id));
     renderModes(data.modes || []);
+    resumeSavedRun();
   }).catch(() => { /* liste yüklenemezse kapsam olmadan çalışır */ });
 
   // Cevap modları (Hızlı / Dengeli / Derin). Seçim tarayıcıda hatırlanır.
@@ -451,6 +455,7 @@
 
   // banner: katalog eşleşmesiyle (Sor düğmesinden) açıldıysa üstte gösterilecek açıklama (HTML).
   async function openCatalogEntry(scopeId, id, banner) {
+    detachRun();
     const res = await fetch(`/api/catalog/${encodeURIComponent(scopeId)}/${encodeURIComponent(id)}`);
     const data = await res.json();
     if (!res.ok) { answerEl.className = "error"; answerEl.textContent = data.error || "Kayıt açılamadı."; return; }
@@ -528,6 +533,7 @@
       return true;
     }
     if (m.similar && m.similar.length > 0) {
+      detachRun();
       stepsEl.innerHTML = "";
       approveEl.innerHTML = "";
       answerEl.className = "panel";
@@ -615,118 +621,239 @@
     statusEl.innerHTML = busy ? '<span class="spinner"></span> ' + text : text;
   }
 
+  // ---------------- Model incelemesi ----------------
+  // İnceleme sunucuda tarayıcı bağlantısından bağımsız çalışır. Bağlantı koparsa ekran aynı incelemeye kaldığı
+  // yerden yeniden bağlanır; sayfa yenilenirse son inceleme (süren ya da biten) baştan oynatılarak geri gelir.
+  // Hata mesajları gelmiş taslağı / cevabı silmez, ayrı bir uyarı olarak gösterilir.
+  const noticeEl = document.getElementById("notice");
+  const RUN_KEY = "kodAnalistRun";
+  const MAX_RECONNECTS = 6;
+  let currentRun = null;   // ekranda gösterilen inceleme; yenisi başlayınca eskisi ekrana yazmayı bırakır
+
+  function showNotice(text) { noticeEl.textContent = text; }
+  function clearNotice() { noticeEl.textContent = ""; }
+  function saveRun(run) {
+    try {
+      sessionStorage.setItem(RUN_KEY, JSON.stringify({ jobId: run.jobId, question: run.question, scopeId: run.scopeId,
+        topicId: run.topicId, mode: run.modeId }));
+    } catch { /* depolama kapalıysa yenilemede geri gelmez, başka etkisi yok */ }
+  }
+  function forgetRun() { try { sessionStorage.removeItem(RUN_KEY); } catch { /* yok say */ } }
+  function savedRun() { try { return JSON.parse(sessionStorage.getItem(RUN_KEY) || "null"); } catch { return null; } }
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // Katalogdan bir kayıt açılınca süren incelemenin ekrana yazması durur (inceleme sunucuda biter, sonucu gösterilmez).
+  function detachRun() {
+    currentRun = null;
+    forgetRun();
+    clearNotice();
+  }
+
+  // Yeni inceleme görünümü: adımlar, cevap ve onay alanı temizlenir.
+  function newRun(meta) {
+    stepsEl.innerHTML = '<details open><summary>İnceleme adımları</summary></details>';
+    answerEl.className = "";
+    answerEl.innerHTML = "";
+    approveEl.innerHTML = "";
+    clearNotice();
+    lastAsk = null;
+    answerFromCatalog = false;   // cevap alanı artık yapay zekâ cevabını gösterecek
+    openEntryKey = null;
+    markActiveEntry();
+    const run = { ...meta, jobId: null, next: 0, finished: false, stepCount: 0, usageText: "", verifiedRun: true,
+      hasAnswer: false, final: false, failed: false, stepsBox: stepsEl.querySelector("details"), stepList: null };
+    currentRun = run;
+    return run;
+  }
+
+  function handleEvent(evt, run) {
+    const closeSteps = () => { const d = stepsEl.querySelector("details"); if (d) d.open = false; };
+    if (evt.Type === "step") {
+      if (!run.stepList) { run.stepList = document.createElement("ol"); run.stepsBox.appendChild(run.stepList); }
+      const li = document.createElement("li");
+      li.textContent = evt.Text;
+      run.stepList.appendChild(li);
+      run.stepCount++;
+    } else if (evt.Type === "phase") {
+      const div = document.createElement("div");
+      div.className = "phase";
+      div.textContent = evt.Text;
+      run.stepsBox.appendChild(div);
+      run.stepList = document.createElement("ol");
+      run.stepsBox.appendChild(run.stepList);
+      setBusy(true, evt.Text + "… (Adımlar ve süre aşağıda görünür.)");
+    } else if (evt.Type === "draft") {
+      // Doğrulama sürerken taslağı göster; onay formu yalnızca son halde çıkar.
+      answerEl.className = "panel";
+      answerEl.innerHTML =
+        '<div class="catalog-header"><span class="badge stale">Taslak — doğrulanıyor</span> ' +
+        'Bu cevap henüz koda karşı doğrulanmadı; son hali kısa süre içinde burada yerini alacak.</div>' +
+        renderAnswer(evt.Text);
+      run.hasAnswer = true;
+      closeSteps();
+    } else if (evt.Type === "answer-unverified") {
+      // Doğrulamasız mod (ör. Hızlı) ya da doğrulama tamamlanamadı: cevap uyarıyla gösterilir. Analist kontrol edip
+      // onaylarsa kataloğa "doğrulanmamış" işaretiyle kaydedilebilir.
+      answerEl.className = "panel";
+      answerEl.innerHTML =
+        `<div class="catalog-header"><span class="badge stale">${escapeHtml(run.modeLabel || "Hızlı")} mod — doğrulanmadı</span> ` +
+        'Bu cevap koda karşı doğrulanmadı ve yanlış ya da eksik bilgi içerebilir. Kritik bir karar için ' +
+        'Dengeli veya Derin modla yeniden sorun.</div>' +
+        renderAnswer(evt.Text);
+      run.hasAnswer = true;
+      run.final = true;
+      run.verifiedRun = false;
+      closeSteps();
+      lastAsk = { question: run.question, scopeId: run.scopeId, topicId: run.topicId, answer: evt.Text,
+                  mode: run.modeId, verified: false };
+      showApproveForm();
+    } else if (evt.Type === "answer") {
+      answerEl.className = "panel";
+      answerEl.innerHTML = renderAnswer(evt.Text);
+      run.hasAnswer = true;
+      run.final = true;
+      closeSteps();
+      lastAsk = { question: run.question, scopeId: run.scopeId, topicId: run.topicId, answer: evt.Text,
+                  mode: run.modeId, verified: true };
+      showApproveForm();
+    } else if (evt.Type === "usage") {
+      run.usageText = evt.Text;
+    } else if (evt.Type === "error") {
+      run.failed = true;
+      if (run.hasAnswer) {
+        showNotice(evt.Text);   // gelmiş cevabı silme
+        const header = answerEl.querySelector(".catalog-header");
+        if (!run.final && header)
+          header.innerHTML = '<span class="badge stale">Taslak — doğrulanamadı</span> ' +
+            'Doğrulama tamamlanamadı; bu taslak koda karşı doğrulanmadı. Kaynaklarına bakarak kontrol edin veya soruyu yeniden sorun.';
+      } else {
+        answerEl.className = "error";
+        answerEl.textContent = evt.Text;
+      }
+    }
+  }
+
+  // Bir SSE yanıtını sonuna kadar okur. Bağlantı koparsa hata fırlatır; çağıran yeniden bağlanır.
+  async function readStream(res, run) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (run !== currentRun) { reader.cancel().catch(() => {}); return; }
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        if (!chunk.startsWith("data: ")) continue;   // ": hala-calisiyor" satırları yok sayılır
+        const evt = JSON.parse(chunk.slice(6));
+        if (evt.Type === "job") { run.jobId = evt.Text; saveRun(run); continue; }
+        if (evt.Type === "done") { run.finished = true; continue; }
+        if (typeof evt.Seq === "number" && evt.Seq >= 0) {
+          if (evt.Seq < run.next) continue;   // yeniden bağlanınca tekrar gelen olay
+          run.next = evt.Seq + 1;
+        }
+        handleEvent(evt, run);
+      }
+    }
+  }
+
+  // İncelemeyi sonuna kadar izler; bağlantı koparsa artan aralıklarla yeniden bağlanır.
+  async function follow(run, firstResponse) {
+    let res = firstResponse;
+    let failures = 0;
+    while (run === currentRun) {
+      if (res) {
+        const before = run.next;
+        try { await readStream(res, run); } catch { /* bağlantı koptu; aşağıda yeniden bağlanılır */ }
+        if (run !== currentRun) return;
+        if (run.finished) break;
+        if (run.next > before) failures = 0;
+      }
+      if (!run.jobId) {
+        if (!run.hasAnswer) { answerEl.className = "error"; answerEl.textContent = "Sunucuya bağlanılamadı. Yeniden deneyin."; }
+        setBusy(false, "");
+        return;
+      }
+      if (++failures > MAX_RECONNECTS) {
+        showNotice("Sunucuyla bağlantı kurulamıyor. İnceleme sunucuda sürüyor olabilir: birkaç dakika sonra sayfayı " +
+          "yenilerseniz sonuç burada görünür.");
+        setBusy(false, "");
+        return;
+      }
+      setBusy(true, `Bağlantı koptu, yeniden bağlanılıyor (${failures}/${MAX_RECONNECTS})… İnceleme sunucuda sürüyor.`);
+      await sleep(Math.min(1500 * failures, 10000));
+      if (run !== currentRun) return;
+      res = null;
+      try {
+        const r = await fetch(`/api/ask/${encodeURIComponent(run.jobId)}/stream?after=${run.next}`);
+        if (r.status === 404) {
+          showNotice("İnceleme sunucuda bulunamadı (sunucu yeniden başlamış olabilir). Soruyu yeniden sorun.");
+          forgetRun();
+          setBusy(false, "");
+          return;
+        }
+        if (r.ok && r.body) res = r;
+      } catch { /* sunucuya ulaşılamadı; bir sonraki denemede tekrar */ }
+    }
+    if (run !== currentRun) return;
+    const summary = run.failed
+      ? "İnceleme tamamlanamadı (ayrıntı yukarıda)."
+      : run.stepCount + (run.verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (doğrulanmadı).");
+    setBusy(false, summary + (run.usageText ? " " + run.usageText : ""));
+  }
+
   // force = true: katalog kontrolünü atla, modeli doğrudan çalıştır ("Yeniden incele" / "Hiçbiri değil").
   async function ask(force) {
     const question = questionEl.value.trim();
     if (!question) return;
     if (force !== true && await tryCatalogFirst(question)) return;
     const mode = selectedMode();
-
-    // Her aşamanın adımları ayrı numaralanır (aşama başlığı + kendi listesi).
-    stepsEl.innerHTML = '<details open><summary>İnceleme adımları</summary></details>';
-    const stepsBox = stepsEl.querySelector("details");
-    let stepList = null;
-    function newStepList() {
-      stepList = document.createElement("ol");
-      stepsBox.appendChild(stepList);
-    }
-    answerEl.innerHTML = "";
-    approveEl.innerHTML = "";
-    lastAsk = null;
-    answerFromCatalog = false;   // cevap alanı artık yapay zekâ cevabını gösterecek
-    openEntryKey = null;
-    markActiveEntry();
+    forgetRun();
+    const run = newRun({ question, scopeId: scopeEl.value || null, topicId: topicEl.value || null,
+      modeId: mode?.id || null, modeLabel: mode?.label || null });
     setBusy(true, "Kod inceleniyor… Karmaşık sorular birkaç dakika sürebilir.");
 
+    let res;
     try {
-      const res = await fetch("/api/ask", {
+      res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question,
-          scopeId: scopeEl.value || null,
-          topicId: topicEl.value || null,
-          mode: mode?.id || null,
-        }),
+        body: JSON.stringify({ question, scopeId: run.scopeId, topicId: run.topicId, mode: run.modeId }),
       });
       if (!res.ok || !res.body) throw new Error("Sunucu hatası (" + res.status + ")");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let stepCount = 0;
-      let usageText = "";
-      let verifiedRun = true;   // doğrulamasız modda false olur
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let sep;
-        while ((sep = buffer.indexOf("\n\n")) >= 0) {
-          const chunk = buffer.slice(0, sep);
-          buffer = buffer.slice(sep + 2);
-          if (!chunk.startsWith("data: ")) continue;
-          const evt = JSON.parse(chunk.slice(6));
-
-          if (evt.Type === "step") {
-            if (!stepList) newStepList();
-            const li = document.createElement("li");
-            li.textContent = evt.Text;
-            stepList.appendChild(li);
-            stepCount++;
-          } else if (evt.Type === "phase") {
-            const div = document.createElement("div");
-            div.className = "phase";
-            div.textContent = evt.Text;
-            stepsBox.appendChild(div);
-            newStepList();
-            setBusy(true, evt.Text + "… (Adımlar ve süre aşağıda görünür.)");
-          } else if (evt.Type === "draft") {
-            // Doğrulama sürerken taslağı göster; onay formu yalnızca doğrulanmış son halde çıkar.
-            answerEl.className = "panel";
-            answerEl.innerHTML =
-              '<div class="catalog-header"><span class="badge stale">Taslak — doğrulanıyor</span> ' +
-              'Bu cevap henüz koda karşı doğrulanmadı; son hali birkaç dakika içinde burada yerini alacak.</div>' +
-              renderAnswer(evt.Text);
-            stepsEl.querySelector("details").open = false;
-          } else if (evt.Type === "answer-unverified") {
-            // Doğrulamasız mod (ör. Hızlı): cevap uyarıyla gösterilir. Analist kontrol edip onaylarsa kataloğa
-            // "doğrulanmamış" işaretiyle kaydedilebilir.
-            answerEl.className = "panel";
-            answerEl.innerHTML =
-              `<div class="catalog-header"><span class="badge stale">${escapeHtml(mode?.label || "Hızlı")} mod — doğrulanmadı</span> ` +
-              'Bu cevap koda karşı doğrulanmadı ve yanlış ya da eksik bilgi içerebilir. Kritik bir karar için ' +
-              'Dengeli veya Derin modla yeniden sorun.</div>' +
-              renderAnswer(evt.Text);
-            stepsEl.querySelector("details").open = false;
-            verifiedRun = false;
-            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text,
-                        mode: mode?.id || null, verified: false };
-            showApproveForm();
-          } else if (evt.Type === "answer") {
-            answerEl.className = "panel";
-            answerEl.innerHTML = renderAnswer(evt.Text);
-            stepsEl.querySelector("details").open = false;
-            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text,
-                        mode: mode?.id || null, verified: true };
-            showApproveForm();
-          } else if (evt.Type === "usage") {
-            usageText = evt.Text;
-          } else if (evt.Type === "error") {
-            answerEl.className = "error";
-            answerEl.textContent = evt.Text;
-          }
-        }
-      }
-      setBusy(false, stepCount + (verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (doğrulanmadı).") +
-        (usageText ? " " + usageText : ""));
     } catch (err) {
+      if (run !== currentRun) return;
       answerEl.className = "error";
-      answerEl.textContent = "Bağlantı hatası: " + err.message;
+      answerEl.textContent = "Bağlantı hatası: " + err.message + ". Uygulamanın çalıştığından emin olup yeniden deneyin.";
       setBusy(false, "");
+      return;
     }
+    await follow(run, res);
+  }
+
+  // Sayfa yenilendiyse son incelemeyi (süren ya da biten) geri getir.
+  async function resumeSavedRun() {
+    const saved = savedRun();
+    if (!saved?.jobId) return;
+    let res;
+    try { res = await fetch(`/api/ask/${encodeURIComponent(saved.jobId)}/stream?after=0`); } catch { return; }
+    if (!res.ok || !res.body) { forgetRun(); return; }   // süresi dolmuş veya sunucu yeniden başlamış
+
+    questionEl.value = saved.question || "";
+    if (saved.scopeId) scopeEl.value = saved.scopeId;
+    if (saved.topicId) topicEl.value = saved.topicId;
+    const mode = modes.find((m) => m.id === saved.mode);
+    if (mode) { const radio = modesEl.querySelector(`input[name=mode][value="${CSS.escape(mode.id)}"]`); if (radio) radio.checked = true; }
+    if (catalogEnabled) loadCatalog();
+
+    const run = newRun({ question: saved.question, scopeId: saved.scopeId, topicId: saved.topicId,
+      modeId: saved.mode, modeLabel: mode?.label || null });
+    run.jobId = saved.jobId;
+    setBusy(true, "Önceki inceleme yükleniyor…");
+    await follow(run, res);
   }
 
   askBtn.addEventListener("click", () => ask(false));

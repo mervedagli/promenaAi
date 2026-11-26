@@ -100,7 +100,20 @@ public sealed class AnalystAgent(
         List<MessageParam> verifyConversation = [new UserMessageParam { Content = verificationRequest }];
         // "single": ek okuma yok, kanıt paketiyle tek model çağrısı. "tools": birkaç ek okumaya izin verilir.
         var verifyTurns = mode.Verify == "single" ? 0 : mode.VerifyMaxToolTurns;
-        var verified = await RunLoopAsync(BuildVerifierPrompt(), verifyConversation, scope, verifyTurns, mode, emit, ct, verifyUsage);
+        LoopResult verified;
+        try
+        {
+            verified = await RunLoopAsync(BuildVerifierPrompt(), verifyConversation, scope, verifyTurns, mode, emit, ct, verifyUsage);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Doğrulama sırasında model / ağ hatası: hazır taslak kaybolmasın, doğrulanmamış olarak gösterilsin.
+            logger.LogError(ex, "Doğrulama aşaması hata verdi; taslak doğrulanmamış olarak gösteriliyor");
+            await emit(new AgentEvent("answer-unverified",
+                "> ⚠️ Doğrulama aşaması bir hata nedeniyle tamamlanamadı. Aşağıdaki taslak koda karşı doğrulanmadı; " +
+                "kaynaklarına bakarak kontrol edin veya soruyu yeniden sorun.\n\n" + draft.Text));
+            return;
+        }
 
         if (!verified.Success)
         {

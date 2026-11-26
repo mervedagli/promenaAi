@@ -80,6 +80,8 @@ builder.Services.AddSingleton<AnthropicClient>(_ =>
     return new AnthropicFoundryClient(credentials);
 });
 builder.Services.AddSingleton<AnalystAgent>();
+builder.Services.AddSingleton<AskJobStore>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AskJobStore>());
 
 var app = builder.Build();
 
@@ -311,7 +313,11 @@ app.MapPost("/api/catalog/match", async (CatalogMatchRequest req, CatalogService
 app.MapPost("/api/catalog/sources-preview", (SourcesPreviewRequest req, SourceTracker tracker) =>
     tracker.ExtractSources(req.Answer, req.ScopeId).Select(s => new { s.Kind, s.Label, s.Repo, s.Path, s.StartLine, s.EndLine }));
 
-app.MapPost("/api/ask", async (AskRequest request, AnalystAgent agent, ScopeService scopes, HttpContext http, ILogger<Program> logger) =>
+// Soru-cevap. İnceleme tarayıcı bağlantısından bağımsız arka planda çalışır (AskJobStore); ilerleme adımları ve
+// cevap Server-Sent Events (SSE) ile akıtılır. Bağlantı koparsa tarayıcı GET /api/ask/{id}/stream ile kaldığı
+// yerden devam eder; sayfa yenilenirse aynı adresle tüm olaylar baştan gelir.
+app.MapPost("/api/ask", async (AskRequest request, AnalystAgent agent, ScopeService scopes, AskJobStore jobs,
+    HttpContext http, ILogger<Program> logger) =>
 {
     if (string.IsNullOrWhiteSpace(request.Question))
     {
@@ -319,29 +325,47 @@ app.MapPost("/api/ask", async (AskRequest request, AnalystAgent agent, ScopeServ
         return;
     }
 
-    http.Response.ContentType = "text/event-stream";
-    http.Response.Headers.CacheControl = "no-cache";
+    var job = jobs.Create();
+    var question = request.Question.Trim();
+    var mode = ResolveMode(request.Mode, request.FastMode);
+    var scope = scopes.Build(request.ScopeId, request.TopicId);
+    logger.LogInformation("İnceleme başladı {Id} | Mod: {Mode}", job.Id, mode.Id);
 
-    async Task Emit(AgentEvent e)
+    _ = Task.Run(async () =>
     {
-        await http.Response.WriteAsync($"data: {JsonSerializer.Serialize(e)}\n\n", http.RequestAborted);
-        await http.Response.Body.FlushAsync(http.RequestAborted);
-    }
+        try
+        {
+            await agent.RunAsync(question, scope, mode, e => { job.Add(e); return Task.CompletedTask; }, job.Cancellation.Token);
+        }
+        catch (OperationCanceledException) when (job.Cancellation.IsCancellationRequested)
+        {
+            job.Add(new AgentEvent("error", "İnceleme durduruldu: sayfa uzun süre kapalı kaldı. Soruyu yeniden sorabilirsiniz."));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Soru yanıtlanırken hata oluştu ({Id})", job.Id);
+            job.Add(new AgentEvent("error", "Soru yanıtlanırken bir hata oluştu. Ayrıntılar sunucu loglarında."));
+        }
+        finally
+        {
+            job.Complete();
+        }
+    });
 
-    try
+    await AskJobStore.StreamAsync(job, 0, http);
+});
+
+// Kopan bağlantıyı sürdürmek veya sayfa yenilenince cevabı geri getirmek için: "after" sırasından itibaren olaylar.
+app.MapGet("/api/ask/{id}/stream", async (string id, int? after, AskJobStore jobs, HttpContext http) =>
+{
+    var job = jobs.Get(id);
+    if (job == null)
     {
-        var scope = scopes.Build(request.ScopeId, request.TopicId);
-        await agent.RunAsync(request.Question.Trim(), scope, ResolveMode(request.Mode, request.FastMode), Emit, http.RequestAborted);
+        http.Response.StatusCode = StatusCodes.Status404NotFound;
+        await http.Response.WriteAsJsonAsync(new { error = "İnceleme bulunamadı (süresi dolmuş veya sunucu yeniden başlamış olabilir)." });
+        return;
     }
-    catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested)
-    {
-        // Kullanıcı sayfayı kapattı veya isteği iptal etti.
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Soru yanıtlanırken hata oluştu");
-        await Emit(new AgentEvent("error", "Soru yanıtlanırken bir hata oluştu. Ayrıntılar sunucu loglarında."));
-    }
+    await AskJobStore.StreamAsync(job, after ?? 0, http);
 });
 
 app.Run();
