@@ -8,15 +8,18 @@ using Microsoft.Identity.Web;
 
 namespace KodAnalist;
 
-/// <summary>Giriş ayarlarının özeti (ayar dosyasındaki "AzureAd" bölümünden).</summary>
-public sealed record AuthSettings(bool Enabled, string[] AllowedGroupIds);
+/// <summary>Giriş ayarlarının özeti. Mode: "ldap", "entra" veya "none" (giriş kapalı).</summary>
+public sealed record AuthSettings(bool Enabled, string Mode, string[] AllowedGroupIds);
+
+public sealed record LoginRequest(string? Email, string? Password);
 
 /// <summary>
-/// Microsoft Entra ID (Azure Active Directory) ile giriş. Yalnızca şirketin kendi dizinindeki (tenant) hesaplar girebilir;
-/// istenirse ayrıca belirli güvenlik gruplarıyla sınırlanır. Şifre bu uygulamaya hiç uğramaz: kullanıcı Microsoft'un
-/// giriş sayfasında (şirketin MFA ve şifre kurallarıyla) giriş yapar ve uygulamaya geri döner.
-///
-/// "AzureAd:TenantId" ve "AzureAd:ClientId" boşsa giriş kapalıdır; uygulama girişsiz çalışır (yerel geliştirme).
+/// Uygulamaya giriş. Ayarlara göre iki yöntemden biri kullanılır:
+/// - "Ldap:Server" doluysa: giriş ekranında e-posta + şifre; şifre şirket içi Active Directory'de (LDAP) doğrulanır
+///   (<see cref="LdapAuthService"/>). Bilgisayara girilen domain şifresiyle aynıdır.
+/// - Değilse ve "AzureAd:TenantId" / "AzureAd:ClientId" doluysa: Microsoft Entra ID; kullanıcı Microsoft'un giriş
+///   sayfasında giriş yapar ve uygulamaya döner.
+/// İkisi de boşsa giriş kapalıdır; uygulama girişsiz çalışır (yerel geliştirme).
 /// </summary>
 public static class AuthSetup
 {
@@ -24,10 +27,25 @@ public static class AuthSetup
 
     public static AuthSettings AddPromenaAuth(this WebApplicationBuilder builder)
     {
+        var ldap = builder.Configuration.GetSection("Ldap").Get<LdapOptions>() ?? new LdapOptions();
+        if (ldap.IsConfigured)
+        {
+            builder.Services.AddSingleton(ldap);
+            builder.Services.AddSingleton<LdapAuthService>();
+            var ldapSettings = new AuthSettings(true, "ldap", []);
+            builder.Services.AddSingleton(ldapSettings);
+            // Grup kontrolü girişte (LdapAuthService) yapılır; sonrasında giriş yapmış olmak yeterli.
+            builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
+            ConfigureCookie(builder);
+            builder.Services.AddAuthorization(o => o.FallbackPolicy =
+                new AuthorizationPolicyBuilder(CookieAuthenticationDefaults.AuthenticationScheme).RequireAuthenticatedUser().Build());
+            return ldapSettings;
+        }
+
         var section = builder.Configuration.GetSection("AzureAd");
         var enabled = !string.IsNullOrWhiteSpace(section["TenantId"]) && !string.IsNullOrWhiteSpace(section["ClientId"]);
         var groups = section.GetSection("AllowedGroupIds").Get<string[]>()?.Where(g => !string.IsNullOrWhiteSpace(g)).ToArray() ?? [];
-        var settings = new AuthSettings(enabled, groups);
+        var settings = new AuthSettings(enabled, enabled ? "entra" : "none", groups);
         builder.Services.AddSingleton(settings);
         if (!enabled) return settings;
 
@@ -40,17 +58,7 @@ public static class AuthSetup
             })
             .AddMicrosoftIdentityWebApp(section, OpenIdConnectDefaults.AuthenticationScheme, CookieAuthenticationDefaults.AuthenticationScheme);
 
-        builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, o =>
-        {
-            o.Cookie.Name = "PromenaRehberi.Oturum";
-            o.Cookie.HttpOnly = true;
-            o.Cookie.SameSite = SameSiteMode.Lax;
-            o.ExpireTimeSpan = TimeSpan.FromHours(10);   // bir iş günü
-            o.SlidingExpiration = true;
-            // API çağrıları yönlendirme değil 401 / 403 alır; ekran bunu görünce giriş ekranına geçer.
-            o.Events.OnRedirectToLogin = ctx => RedirectOrStatus(ctx, LoginPath, StatusCodes.Status401Unauthorized);
-            o.Events.OnRedirectToAccessDenied = ctx => RedirectOrStatus(ctx, LoginPath + "?hata=yetki", StatusCodes.Status403Forbidden);
-        });
+        ConfigureCookie(builder);
 
         builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, o =>
         {
@@ -87,6 +95,19 @@ public static class AuthSetup
         return settings;
     }
 
+    private static void ConfigureCookie(WebApplicationBuilder builder) =>
+        builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, o =>
+        {
+            o.Cookie.Name = "PromenaRehberi.Oturum";
+            o.Cookie.HttpOnly = true;
+            o.Cookie.SameSite = SameSiteMode.Lax;
+            o.ExpireTimeSpan = TimeSpan.FromHours(10);   // bir iş günü
+            o.SlidingExpiration = true;
+            // API çağrıları yönlendirme değil 401 / 403 alır; ekran bunu görünce giriş ekranına geçer.
+            o.Events.OnRedirectToLogin = ctx => RedirectOrStatus(ctx, LoginPath, StatusCodes.Status401Unauthorized);
+            o.Events.OnRedirectToAccessDenied = ctx => RedirectOrStatus(ctx, LoginPath + "?hata=yetki", StatusCodes.Status403Forbidden);
+        });
+
     /// <summary>
     /// Giriş ara katmanlarını ve uç noktalarını ekler. Statik dosyalardan ÖNCE çağrılmalıdır: böylece ana sayfa ve
     /// API'ler de girişe tabi olur. Giriş ekranı ve logolar giriş yapmadan görünür.
@@ -112,10 +133,44 @@ public static class AuthSetup
                 : Results.File(Path.Combine(app.Environment.WebRootPath, "giris.html"), "text/html; charset=utf-8"))
             .AllowAnonymous();
 
+        // E-posta + şifre (Active Directory / LDAP). Şifre kaydedilmez ve loglanmaz.
+        app.MapPost("/auth/giris", async (LoginRequest req, HttpContext http) =>
+        {
+            if (settings.Mode != "ldap") return Results.NotFound();
+            // Yalnızca giriş ekranımızdan (aynı siteden, fetch ile) gelen istekler: başka sitelerin form göndermesini engeller.
+            if (http.Request.Headers["X-Requested-With"] != "fetch") return Results.BadRequest();
+            var origin = http.Request.Headers.Origin.ToString();
+            if (!string.IsNullOrEmpty(origin) &&
+                (!Uri.TryCreate(origin, UriKind.Absolute, out var o) || !string.Equals(o.Authority, http.Request.Host.Value, StringComparison.OrdinalIgnoreCase)))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+            var ldap = http.RequestServices.GetRequiredService<LdapAuthService>();
+            var result = await ldap.LoginAsync(req.Email, req.Password, http.Connection.RemoteIpAddress?.ToString());
+            switch (result.Status)
+            {
+                case LdapLoginStatus.Success:
+                    var u = result.User!;
+                    var claims = new List<Claim> { new("name", u.Name), new("preferred_username", u.Email), new(ClaimTypes.Email, u.Email) };
+                    claims.AddRange(u.Groups.Select(g => new Claim("groups", g)));
+                    // Oturum çerezi tarayıcı kapanınca silinir; açıkken 10 saat (kullanıldıkça uzar).
+                    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
+                        new ClaimsPrincipal(new ClaimsIdentity(claims, "ldap", "name", ClaimTypes.Role)));
+                    return Results.Json(new { ok = true });
+                case LdapLoginStatus.NotAllowed:
+                    return Results.Json(new { error = "Bu hesapla Promena Rehberi'ne erişim yetkiniz yok. Yöneticinizden erişim isteyin." }, statusCode: 403);
+                case LdapLoginStatus.TooManyAttempts:
+                    return Results.Json(new { error = "Çok fazla hatalı deneme yapıldı. Hesabınızın kilitlenmemesi için 15 dakika sonra tekrar deneyin." }, statusCode: 429);
+                case LdapLoginStatus.ServerUnavailable:
+                    return Results.Json(new { error = "Şirket dizin sunucusuna ulaşılamadı. Şirket ağına (veya VPN'e) bağlı olduğunuzdan emin olup tekrar deneyin." }, statusCode: 503);
+                default:
+                    return Results.Json(new { error = "E-posta veya şifre hatalı." }, statusCode: 401);
+            }
+        }).AllowAnonymous();
+
         // Microsoft giriş sayfasına yönlendirir; dönüşte uygulamanın ana sayfası açılır.
         app.MapGet("/auth/login", (string? hesap) =>
         {
-            if (!settings.Enabled) return Results.Redirect("/");
+            if (settings.Mode != "entra") return Results.Redirect(settings.Enabled ? LoginPath : "/");
             var props = new AuthenticationProperties { RedirectUri = "/" };
             if (hesap == "sec") props.Items["prompt"] = "select_account";
             return Results.Challenge(props, [OpenIdConnectDefaults.AuthenticationScheme]);
@@ -136,6 +191,7 @@ public static class AuthSetup
             return Results.Json(new
             {
                 authEnabled = settings.Enabled,
+                mode = settings.Mode,
                 signedIn,
                 name = signedIn ? DisplayName(user) : null,
                 email = signedIn ? Email(user) : null,

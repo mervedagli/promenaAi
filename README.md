@@ -15,6 +15,27 @@ analiste sade dille ve örneklerle anlatılır, kod referansları ekranda kapal�
 4. Analist cevabı kontrol edip onaylarsa cevap kataloğa kaydedilir (her modda; doğrulanmamışsa öyle işaretlenir);
    dayandığı kod değişirse "kod değişti" olarak işaretlenir.
 
+## Giriş: e-posta ve domain şifresi (Active Directory)
+
+`Ldap:Server` ayarı doluysa giriş ekranında **e-posta + şifre** kutuları çıkar. Şifre, bilgisayara girilen domain
+şifresidir ve doğrudan şirket içi Active Directory'de (LDAP) doğrulanır (`LdapAuth.cs`).
+
+- Bağlantı şifrelidir (LDAPS, 636). Şifre hiçbir yere kaydedilmez ve loglanmaz; ayrı bir servis hesabı gerekmez
+  (kullanıcı kendi bilgisiyle bağlanır, adı / e-postası / grupları kendi yetkisiyle okunur).
+- Aynı e-postayla 15 dakikada 5 hatalı denemeden sonra uygulama o hesap için 15 dakika AD'ye hiç sormaz; böylece AD'nin
+  hesap kilitleme kuralı uygulama üzerinden tetiklenmez. Aynı adresten gelen denemeler de sınırlandırılır.
+- `AllowedEmailDomains`: yalnızca bu uzantılardaki e-postalar. `AllowedGroupDns`: isteğe bağlı, yalnızca bu grupların
+  üyeleri (iç içe gruplar dahil).
+- Kullanıcı adı biçimi: önce e-posta (UPN), olmazsa `Domain\kullanıcı` denenir. Şirketinizde UPN e-postadan farklıysa
+  `BindFormats` ile değiştirilebilir (ör. `"{user}@promena.local"`).
+- **Uygulama domain denetleyicisine ağdan erişebilmelidir.** Şirket ağındaki / VPN'deki bir bilgisayarda sorun yoktur;
+  Azure'a yayına alınırsa Azure ile şirket ağı arasında bağlantı (VPN / ExpressRoute) gerekir.
+- LDAPS için domain denetleyicisinin sertifikası çalıştırılan makinede güvenilir olmalıdır (domain bilgisayarlarında
+  kurumsal sertifika zaten güvenilirdir).
+
+Gerekli bilgiler (BT ekibinden): domain denetleyicisi adı ve LDAPS (636) açık mı, NetBIOS domain adı, kök DN
+(ör. `DC=promena,DC=local`), kullanıcıların UPN'i e-postayla aynı mı, isteğe bağlı izinli grubun DN'i.
+
 ## Giriş: Microsoft Entra ID
 
 Uygulamaya yalnızca şirket hesabıyla girilir. Kullanıcı giriş ekranında **"Microsoft hesabıyla giriş yap"** düğmesine

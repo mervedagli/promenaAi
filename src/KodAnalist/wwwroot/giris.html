@@ -76,11 +76,37 @@
       border-radius: 10px; background: var(--brand-soft); font-size: 13px; color: var(--muted);
     }
     .note svg { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; color: var(--brand); }
+    /* Hangi giriş yönteminin gösterileceği sunucudan öğrenilene kadar ikisi de gizli. */
+    .method { display: none; }
+    body[data-mode="ldap"] .method-ldap, body[data-mode="entra"] .method-entra { display: block; }
+    form { text-align: left; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+    .field { margin-bottom: 16px; }
+    .input-wrap { position: relative; }
+    input[type=email], input[type=password], input[type=text] {
+      width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+      color: var(--text); font: inherit; transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+    .input-wrap input { padding-right: 64px; }
+    .toggle {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; border: 0;
+      color: var(--muted); font: inherit; font-size: 12px; padding: 6px 8px; cursor: pointer; border-radius: 6px;
+    }
+    .toggle:hover { color: var(--text); }
+    .submit {
+      width: 100%; border: 0; border-radius: 10px; padding: 12px 16px; margin-top: 4px; cursor: pointer;
+      background: var(--button); color: var(--button-text); font: inherit; font-weight: 600; transition: background .15s ease;
+    }
+    .submit:hover { background: var(--button-hover); }
+    .submit:disabled { opacity: .6; cursor: default; }
+    .submit:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+    .caps { font-size: 12px; color: var(--error); margin-top: 6px; display: none; }
     footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
     @media (max-width: 420px) { .card { padding: 32px 22px 26px; } }
   </style>
 </head>
-<body>
+<body data-mode="">
   <main class="card">
     <img class="logo logo-light" src="/img/promena-logo.png" alt="Promena" width="137" height="44">
     <img class="logo logo-dark" src="/img/promena-logo-dark.png" alt="Promena" width="137" height="44">
@@ -89,6 +115,25 @@
 
     <div id="message" class="message" role="status"></div>
 
+    <!-- E-posta + şifre: şirket içi Active Directory -->
+    <form id="ldapForm" class="method method-ldap" novalidate>
+      <div class="field">
+        <label for="email">E-posta</label>
+        <input id="email" name="email" type="email" autocomplete="username" placeholder="ad.soyad@promena.net" required>
+      </div>
+      <div class="field">
+        <label for="password">Şifre</label>
+        <div class="input-wrap">
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button type="button" class="toggle" id="togglePw" aria-label="Şifreyi göster">Göster</button>
+        </div>
+        <div class="caps" id="capsWarn">Caps Lock açık.</div>
+      </div>
+      <button class="submit" id="submitBtn" type="submit">Giriş yap</button>
+    </form>
+
+    <!-- Microsoft Entra ID -->
+    <div class="method method-entra">
     <a class="ms-button" id="loginBtn" href="/auth/login">
       <svg viewBox="0 0 21 21" aria-hidden="true">
         <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
@@ -99,12 +144,15 @@
       Microsoft hesabıyla giriş yap
     </a>
     <a class="alt" href="/auth/login?hesap=sec">Farklı bir hesapla giriş yap</a>
+    </div>
 
     <div class="note">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
       </svg>
-      <span>Yalnızca Promena çalışanları giriş yapabilir. Şirket e-posta adresinizi kullanın; şifreniz yalnızca
+      <span class="method method-ldap">Yalnızca Promena çalışanları giriş yapabilir. Bilgisayarınıza girdiğiniz
+        <strong>domain şifrenizi</strong> kullanın. Şifreniz kaydedilmez; doğrudan şirket dizininde (Active Directory) doğrulanır.</span>
+      <span class="method method-entra">Yalnızca Promena çalışanları giriş yapabilir. Şirket e-posta adresinizi kullanın; şifreniz yalnızca
         Microsoft'un giriş sayfasında girilir, bu uygulamaya iletilmez.</span>
     </div>
   </main>
@@ -127,12 +175,64 @@
       messageEl.textContent = "Çıkış yaptınız.";
     }
 
-    // Zaten giriş yapılmışsa (ve yetki sorunu yoksa) doğrudan uygulamaya geç.
-    if (!params.has("hata") && !params.has("cikis")) {
-      fetch("/api/me").then((r) => r.json()).then((me) => {
-        if (!me.authEnabled || me.signedIn) location.replace("/");
-      }).catch(() => { /* giriş ekranında kal */ });
-    }
+    // Sunucudaki giriş yöntemini öğren; zaten giriş yapılmışsa (ve yetki sorunu yoksa) doğrudan uygulamaya geç.
+    fetch("/api/me").then((r) => r.json()).then((me) => {
+      if (!me.authEnabled || (me.signedIn && !params.has("hata") && !params.has("cikis"))) { location.replace("/"); return; }
+      document.body.dataset.mode = me.mode;
+      if (me.mode === "ldap") {
+        try { const last = localStorage.getItem("promenaRehberiEposta"); if (last) emailEl.value = last; } catch { }
+        (emailEl.value ? pwEl : emailEl).focus();
+      }
+    }).catch(() => { document.body.dataset.mode = "ldap"; });
+
+    const form = document.getElementById("ldapForm");
+    const emailEl = document.getElementById("email");
+    const pwEl = document.getElementById("password");
+    const submitBtn = document.getElementById("submitBtn");
+    function showError(text) { messageEl.className = "message error"; messageEl.textContent = text; }
+
+    document.getElementById("togglePw").addEventListener("click", (e) => {
+      const show = pwEl.type === "password";
+      pwEl.type = show ? "text" : "password";
+      e.target.textContent = show ? "Gizle" : "Göster";
+      e.target.setAttribute("aria-label", show ? "Şifreyi gizle" : "Şifreyi göster");
+      pwEl.focus();
+    });
+    pwEl.addEventListener("keyup", (e) => {
+      document.getElementById("capsWarn").style.display = e.getModifierState && e.getModifierState("CapsLock") ? "block" : "none";
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = emailEl.value.trim();
+      const password = pwEl.value;
+      if (!email || !email.includes("@")) { showError("Şirket e-posta adresinizi yazın."); emailEl.focus(); return; }
+      if (!password) { showError("Şifrenizi yazın."); pwEl.focus(); return; }
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Giriş yapılıyor…";
+      messageEl.textContent = ""; messageEl.className = "message";
+      try {
+        const res = await fetch("/auth/giris", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (res.ok) {
+          try { localStorage.setItem("promenaRehberiEposta", email); } catch { }
+          location.replace("/");
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || "Giriş yapılamadı. Lütfen tekrar deneyin.");
+        pwEl.value = "";
+        pwEl.focus();
+      } catch {
+        showError("Sunucuya ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Giriş yap";
+      }
+    });
   </script>
 </body>
 </html>

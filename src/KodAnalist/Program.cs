@@ -83,13 +83,17 @@ builder.Services.AddSingleton<AnalystAgent>();
 builder.Services.AddSingleton<AskJobStore>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AskJobStore>());
 
-// Microsoft Entra ID girişi ("AzureAd" ayarları doluysa açılır; boşsa uygulama girişsiz çalışır).
+// Giriş: "Ldap" ayarı doluysa e-posta + şifre (Active Directory), "AzureAd" doluysa Microsoft Entra ID; ikisi de boşsa kapalı.
 var authSettings = builder.AddPromenaAuth();
 
 var app = builder.Build();
 
 if (!authSettings.Enabled)
-    app.Logger.LogWarning("Giriş KAPALI: AzureAd:TenantId / AzureAd:ClientId ayarlanmamış. Uygulamayı adresi bilen herkes kullanabilir.");
+    app.Logger.LogWarning("Giriş KAPALI: Ldap:Server veya AzureAd:TenantId / AzureAd:ClientId ayarlanmamış. Uygulamayı adresi bilen herkes kullanabilir.");
+else
+    app.Logger.LogInformation("Giriş açık: {Mode}", authSettings.Mode == "ldap" ? "e-posta + şifre (Active Directory / LDAP)" : "Microsoft Entra ID");
+if (authSettings.Mode == "ldap" && !app.Services.GetRequiredService<LdapOptions>().UseSsl)
+    app.Logger.LogWarning("LDAP bağlantısı ŞİFRESİZ (Ldap:UseSsl=false): şifreler ağda açık gider. Yalnızca test içindir.");
 
 // Giriş, ana sayfa ve statik dosyalardan önce: giriş yapmayan kullanıcı yalnızca giriş ekranını görür.
 app.UsePromenaAuth(authSettings);
