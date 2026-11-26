@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kod Analist</title>
+  <script>
+    // Tema (Sistem / Açık / Koyu): sayfa çizilmeden önce uygulanır ki açılışta renk sıçraması olmasın.
+    try {
+      const t = localStorage.getItem("kodAnalistTheme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch { /* depolama kapalıysa sistem teması kullanılır */ }
+  </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <style>
@@ -12,14 +19,24 @@
       --border: #e3e6eb; --accent: #2f5bd3; --accent-text: #ffffff;
       --code-bg: #f1f3f6; --error: #b42318; --error-bg: #fef3f2;
       --ok: #067647; --warn: #b54708;
+      color-scheme: light;
     }
+    /* Koyu tema: "Sistem" seçiliyken işletim sisteminin ayarına uyar, "Koyu" seçiliyken her zaman uygulanır. */
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #98a2b3;
         --border: #2c323c; --accent: #6b8ff0; --accent-text: #0d1117;
         --code-bg: #252a33; --error: #fda29b; --error-bg: #3a1a17;
         --ok: #75e0a7; --warn: #fdb022;
+        color-scheme: dark;
       }
+    }
+    :root[data-theme="dark"] {
+      --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #98a2b3;
+      --border: #2c323c; --accent: #6b8ff0; --accent-text: #0d1117;
+      --code-bg: #252a33; --error: #fda29b; --error-bg: #3a1a17;
+      --ok: #75e0a7; --warn: #fdb022;
+      color-scheme: dark;
     }
     * { box-sizing: border-box; }
     body {
@@ -28,6 +45,14 @@
     }
     main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
     h1 { font-size: 22px; margin: 0 0 4px; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .theme-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+    .theme-switch button {
+      background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 5px 12px;
+      font-size: 13px; font-weight: 500;
+    }
+    .theme-switch button + button { border-left: 1px solid var(--border); }
+    .theme-switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
     .subtitle { color: var(--muted); margin: 0 0 24px; }
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
     textarea {
@@ -130,7 +155,14 @@
 </head>
 <body>
 <main>
-  <h1>Kod Analist</h1>
+  <div class="topbar">
+    <h1>Kod Analist</h1>
+    <div class="theme-switch" role="group" aria-label="Tema">
+      <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
+      <button type="button" data-theme-choice="light">Açık</button>
+      <button type="button" data-theme-choice="dark">Koyu</button>
+    </div>
+  </div>
   <p class="subtitle">İş kurallarını sorun; cevaplar kaynak kod incelenerek, sade bir dille ve örneklerle verilir.</p>
   <div id="syncStatus" class="sync-status"></div>
 
@@ -160,6 +192,22 @@
 </main>
 
 <script>
+  // Tema seçimi: "system" işletim sisteminin ayarını izler; seçim tarayıcıda hatırlanır.
+  (function initThemeSwitch() {
+    const buttons = document.querySelectorAll("[data-theme-choice]");
+    function apply(choice) {
+      if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
+      else delete document.documentElement.dataset.theme;
+      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
+      try {
+        if (choice === "system") localStorage.removeItem("kodAnalistTheme");
+        else localStorage.setItem("kodAnalistTheme", choice);
+      } catch { /* depolama kapalıysa yalnızca bu oturumda geçerli olur */ }
+    }
+    for (const b of buttons) b.addEventListener("click", () => apply(b.dataset.themeChoice));
+    apply(document.documentElement.dataset.theme || "system");
+  })();
+
   const questionEl = document.getElementById("question");
   const askBtn = document.getElementById("ask");
   const statusEl = document.getElementById("status");
