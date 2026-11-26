@@ -257,7 +257,7 @@
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const res = await nativeFetch(...args);
-    if (res.status === 401) location.href = "/giris";
+    if (res.status === 401) location.href = "/login";
     return res;
   };
 

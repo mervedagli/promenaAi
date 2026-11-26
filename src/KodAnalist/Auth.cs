@@ -23,7 +23,7 @@ public sealed record LoginRequest(string? Email, string? Password);
 /// </summary>
 public static class AuthSetup
 {
-    public const string LoginPath = "/giris";
+    public const string LoginPath = "/login";
 
     public static AuthSettings AddPromenaAuth(this WebApplicationBuilder builder)
     {
@@ -78,7 +78,7 @@ public static class AuthSetup
                 if (ctx.Result?.Handled == true) return;
                 ctx.HttpContext.RequestServices.GetRequiredService<ILogger<AuthSettings>>()
                     .LogWarning(ctx.Failure, "Microsoft girişi tamamlanamadı");
-                ctx.Response.Redirect(LoginPath + "?hata=giris");
+                ctx.Response.Redirect(LoginPath + "?error=login-failed");
                 ctx.HandleResponse();
             };
         });
@@ -105,7 +105,7 @@ public static class AuthSetup
             o.SlidingExpiration = true;
             // API çağrıları yönlendirme değil 401 / 403 alır; ekran bunu görünce giriş ekranına geçer.
             o.Events.OnRedirectToLogin = ctx => RedirectOrStatus(ctx, LoginPath, StatusCodes.Status401Unauthorized);
-            o.Events.OnRedirectToAccessDenied = ctx => RedirectOrStatus(ctx, LoginPath + "?hata=yetki", StatusCodes.Status403Forbidden);
+            o.Events.OnRedirectToAccessDenied = ctx => RedirectOrStatus(ctx, LoginPath + "?error=access-denied", StatusCodes.Status403Forbidden);
         });
 
     /// <summary>
@@ -130,11 +130,14 @@ public static class AuthSetup
         app.MapGet(LoginPath, (HttpContext http) =>
             !settings.Enabled
                 ? Results.Redirect("/")   // giriş kapalıysa doğrudan uygulama
-                : Results.File(Path.Combine(app.Environment.WebRootPath, "giris.html"), "text/html; charset=utf-8"))
+                : Results.File(Path.Combine(app.Environment.WebRootPath, "login.html"), "text/html; charset=utf-8"))
             .AllowAnonymous();
 
+        // Eski Türkçe adres (/giris) kaydedilmiş olabilir: yeni adrese yönlendir.
+        app.MapGet("/giris", () => Results.Redirect(LoginPath)).AllowAnonymous();
+
         // E-posta + şifre (Active Directory / LDAP). Şifre kaydedilmez ve loglanmaz.
-        app.MapPost("/auth/giris", async (LoginRequest req, HttpContext http) =>
+        app.MapPost("/auth/login", async (LoginRequest req, HttpContext http) =>
         {
             if (settings.Mode != "ldap") return Results.NotFound();
             // Yalnızca giriş ekranımızdan (aynı siteden, fetch ile) gelen istekler: başka sitelerin form göndermesini engeller.
@@ -168,11 +171,11 @@ public static class AuthSetup
         }).AllowAnonymous();
 
         // Microsoft giriş sayfasına yönlendirir; dönüşte uygulamanın ana sayfası açılır.
-        app.MapGet("/auth/login", (string? hesap) =>
+        app.MapGet("/auth/microsoft", (bool? selectAccount) =>
         {
             if (settings.Mode != "entra") return Results.Redirect(settings.Enabled ? LoginPath : "/");
             var props = new AuthenticationProperties { RedirectUri = "/" };
-            if (hesap == "sec") props.Items["prompt"] = "select_account";
+            if (selectAccount == true) props.Items["prompt"] = "select_account";
             return Results.Challenge(props, [OpenIdConnectDefaults.AuthenticationScheme]);
         }).AllowAnonymous();
 
@@ -180,7 +183,7 @@ public static class AuthSetup
         app.MapGet("/auth/logout", async (HttpContext http) =>
         {
             if (settings.Enabled) await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-            return Results.Redirect(settings.Enabled ? LoginPath + "?cikis=1" : "/");
+            return Results.Redirect(settings.Enabled ? LoginPath + "?loggedOut=1" : "/");
         }).AllowAnonymous();
 
         // Ekranın kimin giriş yaptığını göstermesi için.

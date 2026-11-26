@@ -134,7 +134,7 @@
 
     <!-- Microsoft Entra ID -->
     <div class="method method-entra">
-    <a class="ms-button" id="loginBtn" href="/auth/login">
+    <a class="ms-button" id="loginBtn" href="/auth/microsoft">
       <svg viewBox="0 0 21 21" aria-hidden="true">
         <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
         <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
@@ -143,7 +143,7 @@
       </svg>
       Microsoft hesabıyla giriş yap
     </a>
-    <a class="alt" href="/auth/login?hesap=sec">Farklı bir hesapla giriş yap</a>
+    <a class="alt" href="/auth/microsoft?selectAccount=true">Farklı bir hesapla giriş yap</a>
     </div>
 
     <div class="note">
@@ -162,26 +162,26 @@
     const params = new URLSearchParams(location.search);
     const messageEl = document.getElementById("message");
     const messages = {
-      yetki: ["error", "Bu hesapla Promena Rehberi'ne erişim yetkiniz yok. Farklı bir hesapla deneyin veya yöneticinizden erişim isteyin."],
-      giris: ["error", "Giriş tamamlanamadı. Lütfen tekrar deneyin."],
+      "access-denied": ["error", "Bu hesapla Promena Rehberi'ne erişim yetkiniz yok. Farklı bir hesapla deneyin veya yöneticinizden erişim isteyin."],
+      "login-failed": ["error", "Giriş tamamlanamadı. Lütfen tekrar deneyin."],
     };
-    if (params.has("hata")) {
-      const [kind, text] = messages[params.get("hata")] || messages.giris;
+    if (params.has("error")) {
+      const [kind, text] = messages[params.get("error")] || messages["login-failed"];
       messageEl.className = "message " + kind;
       messageEl.textContent = text;
-      if (params.get("hata") === "yetki") document.getElementById("loginBtn").setAttribute("href", "/auth/login?hesap=sec");
-    } else if (params.has("cikis")) {
+      if (params.get("error") === "access-denied") document.getElementById("loginBtn").setAttribute("href", "/auth/microsoft?selectAccount=true");
+    } else if (params.has("loggedOut")) {
       messageEl.className = "message ok";
       messageEl.textContent = "Çıkış yaptınız.";
     }
 
     // Sunucudaki giriş yöntemini öğren; zaten giriş yapılmışsa (ve yetki sorunu yoksa) doğrudan uygulamaya geç.
     fetch("/api/me").then((r) => r.json()).then((me) => {
-      if (!me.authEnabled || (me.signedIn && !params.has("hata") && !params.has("cikis"))) { location.replace("/"); return; }
+      if (!me.authEnabled || (me.signedIn && !params.has("error") && !params.has("loggedOut"))) { location.replace("/"); return; }
       document.body.dataset.mode = me.mode;
       if (me.mode === "ldap") {
         if (me.emailDomain) emailEl.placeholder = "kullaniciadi@" + me.emailDomain;
-        try { const last = localStorage.getItem("promenaRehberiEposta"); if (last) emailEl.value = last; } catch { }
+        try { const last = localStorage.getItem("promenaRehberiEmail"); if (last) emailEl.value = last; } catch { }
         (emailEl.value ? pwEl : emailEl).focus();
       }
     }).catch(() => { document.body.dataset.mode = "ldap"; });
@@ -214,13 +214,13 @@
       submitBtn.textContent = "Giriş yapılıyor…";
       messageEl.textContent = ""; messageEl.className = "message";
       try {
-        const res = await fetch("/auth/giris", {
+        const res = await fetch("/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
           body: JSON.stringify({ email, password }),
         });
         if (res.ok) {
-          try { localStorage.setItem("promenaRehberiEposta", email); } catch { }
+          try { localStorage.setItem("promenaRehberiEmail", email); } catch { }
           location.replace("/");
           return;
         }

@@ -46,7 +46,7 @@ Uygulamaya yalnızca şirket hesabıyla girilir. Kullanıcı giriş ekranında *
 basar, şifresini Microsoft'un giriş sayfasında girer (şirketin MFA ve şifre kuralları geçerlidir) ve uygulamaya döner.
 Şifre bu uygulamaya hiç gelmez. Başka şirketlerin (tenant) hesapları reddedilir.
 
-- Giriş yapmamış kullanıcı her sayfada giriş ekranına (`/giris`) yönlenir; API'ler `401` döner.
+- Giriş yapmamış kullanıcı her sayfada giriş ekranına (`/login`) yönlenir; API'ler `401` döner.
 - Sağ üstte giriş yapan kişinin adı ve **Çıkış** bağlantısı görünür. Oturum 10 saat sürer (kullanıldıkça uzar).
 - Kataloğa onaylarken **onaylayan, giriş yapan hesaptır**; ad elle yazılmaz, başkası adına onay verilemez.
 - `AzureAd:TenantId` ve `AzureAd:ClientId` boşsa giriş **kapalıdır** ve uygulama girişsiz çalışır (açılışta uyarı loglanır).
