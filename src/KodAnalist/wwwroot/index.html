@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kod Analist</title>
+  <link rel="icon" type="image/png" href="img/favicon.png">
   <script>
     // Tema (Sistem / Açık / Koyu): sayfa çizilmeden önce uygulanır ki açılışta renk sıçraması olmasın.
     try {
@@ -45,7 +46,18 @@
     }
     main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
     h1 { font-size: 22px; margin: 0 0 4px; }
-    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand h1 { margin: 0; padding-left: 14px; border-left: 1px solid var(--border); }
+    .logo { height: 32px; width: auto; display: block; }
+    /* Koyu temada yazısı açık renkli logo gösterilir. */
+    .logo-dark { display: none; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .logo-light { display: none; }
+      :root:not([data-theme="light"]) .logo-dark { display: block; }
+    }
+    :root[data-theme="dark"] .logo-light { display: none; }
+    :root[data-theme="dark"] .logo-dark { display: block; }
     .theme-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
     .theme-switch button {
       background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 5px 12px;
@@ -156,7 +168,11 @@
 <body>
 <main>
   <div class="topbar">
-    <h1>Kod Analist</h1>
+    <div class="brand">
+      <img class="logo logo-light" src="img/promena-logo.png" alt="Promena" width="119" height="32">
+      <img class="logo logo-dark" src="img/promena-logo-dark.png" alt="Promena" width="119" height="32">
+      <h1>Kod Analist</h1>
+    </div>
     <div class="theme-switch" role="group" aria-label="Tema">
       <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
       <button type="button" data-theme-choice="light">Açık</button>
