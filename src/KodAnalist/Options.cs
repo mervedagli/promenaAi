@@ -74,6 +74,13 @@ public sealed class AgentOptions
     /// yalnızca pakette olmayan yerler için birkaç ek okuma yapması beklenir.
     /// </summary>
     public int VerifyMaxToolTurns { get; set; } = 8;
+
+    /// <summary>
+    /// Sorular arasında ortak kalan kısımların (sistem talimatı, araçlar, ihale tipi + konu başlangıç paketi)
+    /// önbellek süresi: "1h" veya "5m". 1 saatte önbelleğe yazma 2 kat, 5 dakikada 1,25 kat ücretlidir; aynı ihale
+    /// tipi ve konuda bir saat içinde ikinci soru sorulduğunda 1 saat daha ucuza gelir.
+    /// </summary>
+    public string SharedCacheTtl { get; set; } = "1h";
 }
 
 /// <summary>

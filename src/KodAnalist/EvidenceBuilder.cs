@@ -68,7 +68,53 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
         "Aşağıdaki kod parçaları, taslaktaki referanslar ve kod haritası kullanılarak program tarafından doğrudan " +
         "dosyalardan kesildi. Satır numaraları günceldir.");
 
-    private string Build(string draft, AnalysisScope scope, string title, string intro)
+    /// <summary>
+    /// Doğrulama aynı konuşmada yapılırken kullanılan ek kanıt paketi: konuşmada zaten bulunan kod parçaları
+    /// (başlangıç paketi, read_method / read_file sonuçları) ve akış ağaçları tekrar eklenmez; yalnızca eksik
+    /// kalan parçalar gelir. Böylece aynı kod iki kez gönderilip ödenmez.
+    /// </summary>
+    public string BuildSupplement(string draft, AnalysisScope scope, string alreadySent) =>
+        Build(draft, scope, "Ek kanıt paketi",
+            "Aşağıda yalnızca bu konuşmada henüz bulunmayan kod parçaları var (başlangıç paketindeki ve okuduğun " +
+            "parçalar tekrar eklenmedi; onlar yukarıda). Satır numaraları günceldir.",
+            ParseCovered(alreadySent), alreadySent);
+
+    [GeneratedRegex(@"^### (?<repo>[^/\s]+)/(?<path>\S+) \(satır (?<a>\d+)-(?<b>\d+)\)", RegexOptions.Multiline)]
+    private static partial Regex PackBlockRegex();
+
+    [GeneratedRegex(@"^Dosya: (?<repo>[^/\s]+)/(?<path>\S+) \(toplam \d+ satır, gösterilen (?<a>\d+)-(?<b>\d+)\)", RegexOptions.Multiline)]
+    private static partial Regex ReadResultRegex();
+
+    /// <summary>Konuşmadaki paket ve okuma başlıklarından, hangi dosyanın hangi satırlarının zaten gönderildiğini çıkarır.</summary>
+    private static Dictionary<(string Repo, string Path), List<(int A, int B)>> ParseCovered(string text)
+    {
+        var covered = new Dictionary<(string, string), List<(int, int)>>();
+        foreach (var m in PackBlockRegex().Matches(text).Concat(ReadResultRegex().Matches(text)))
+        {
+            var key = (m.Groups["repo"].Value, m.Groups["path"].Value);
+            if (!covered.TryGetValue(key, out var list)) covered[key] = list = [];
+            list.Add((int.Parse(m.Groups["a"].Value), int.Parse(m.Groups["b"].Value)));
+        }
+        return covered;
+    }
+
+    private static bool IsCovered(Dictionary<(string Repo, string Path), List<(int A, int B)>>? covered,
+        string repo, string path, int start, int end)
+    {
+        if (covered == null || !covered.TryGetValue((repo, path), out var list)) return false;
+        // Aralıkları birleştirip [start, end] tamamen kapsanıyor mu bak.
+        var pos = start;
+        foreach (var (a, b) in list.OrderBy(x => x.A))
+        {
+            if (a > pos) break;
+            if (b >= pos) pos = b + 1;
+            if (pos > end) return true;
+        }
+        return pos > end;
+    }
+
+    private string Build(string draft, AnalysisScope scope, string title, string intro,
+        Dictionary<(string Repo, string Path), List<(int A, int B)>>? covered = null, string? alreadySent = null)
     {
         var ranges = new List<Range>();
         var flowText = new StringBuilder();
@@ -88,7 +134,9 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
             {
                 var trace = queries.Trace(route, FlowTextDepth);
                 if (trace.Contains("bulunamadı")) continue;
-                flowText.AppendLine($"### Akış: {route}").AppendLine("```").AppendLine(Truncate(trace, 20_000)).AppendLine("```");
+                var header = $"### Akış: {route}";
+                if (alreadySent == null || !alreadySent.Contains(header, StringComparison.Ordinal))
+                    flowText.AppendLine(header).AppendLine("```").AppendLine(Truncate(trace, 20_000)).AppendLine("```");
 
                 // Akıştaki doğrulama metotları (BFF ve HTTP ile çağrılan Sourcing katmanı).
                 // Kapsam seçiliyse diğer ihale tiplerine ait metotlar alınmaz.
@@ -175,7 +223,7 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
             }
         }
 
-        return Render(title, intro, flowText.ToString(), ranges);
+        return Render(title, intro, flowText.ToString(), ranges, covered);
     }
 
     /// <summary>İş kuralı taşımayan yardımcılar (mesaj ekleme, sonuç taşıma vb.).</summary>
@@ -214,8 +262,10 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
         return Math.Min(lines.Length - 1, start + 60);
     }
 
-    private string Render(string title, string intro, string flowText, List<Range> ranges)
+    private string Render(string title, string intro, string flowText, List<Range> ranges,
+        Dictionary<(string Repo, string Path), List<(int A, int B)>>? covered = null)
     {
+        var skipped = 0;
         var sb = new StringBuilder();
         sb.AppendLine($"# {title}");
         sb.AppendLine(intro);
@@ -236,6 +286,7 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
             var start = Math.Max(1, r.Start);
             var end = Math.Min(lines.Length, r.End);
             if (end - start + 1 > MaxRangeLines) end = start + MaxRangeLines - 1;
+            if (IsCovered(covered, r.Repo, r.Path, start, end)) { skipped++; continue; }
 
             var block = new StringBuilder();
             block.AppendLine($"### {r.Repo}/{r.Path} (satır {start}-{end}) — {Truncate(r.Reason, 300)}");
@@ -249,6 +300,8 @@ public sealed partial class EvidenceBuilder(CodeTools tools, CodeMapService code
             sb.Append(block);
         }
 
+        if (skipped > 0)
+            sb.AppendLine($"\n({skipped} parça bu konuşmada zaten bulunduğu için tekrar eklenmedi.)");
         if (truncated > 0)
             sb.AppendLine($"\n(Paket boyut sınırına ulaştı; {truncated} parça eklenmedi. Gerekirse read_file ile oku.)");
         return sb.ToString();

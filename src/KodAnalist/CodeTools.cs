@@ -22,7 +22,7 @@ public sealed class CodeTools
 
     private const long MaxSearchableFileBytes = 3 * 1024 * 1024;
     // Bu sınırlar her adımda modele giden metni (dolayısıyla token'ı) belirler.
-    private const int MaxSearchResults = 50;
+    private const int MaxSearchResults = 30;
     private const int MaxFindResults = 60;
     private const int MaxListEntries = 150;
     private const int MaxReadLines = 250;

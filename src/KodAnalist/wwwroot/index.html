@@ -215,10 +215,10 @@
   <div class="panel">
     <div class="filters">
       <label>İhale tipi
-        <select id="scope"><option value="">Tümü (kapsam yok)</option></select>
+        <select id="scope"></select>
       </label>
       <label>Konu
-        <select id="topic"><option value="">Tümü</option></select>
+        <select id="topic"></select>
       </label>
     </div>
     <textarea id="question" placeholder="Örnek: Grup toplamlı ihalede min/max kuralları nelerdir? Teklif verirken validasyonlar hangi sırayla çalışır?"></textarea>
@@ -269,11 +269,19 @@
   let catalogEnabled = false;
   let lastAsk = null;   // { question, scopeId, topicId, answer, mode, verified } — onaylama formu için
 
-  // İhale tipi ve konu listelerini sunucudan yükle.
+  // İhale tipi ve konu listelerini sunucudan yükle. "Tümü" seçeneği yok: her soru bir ihale tipi ve konuyla
+  // sorulur (başlangıç paketi ve önbellek ancak böyle çalışır). Son seçim tarayıcıda hatırlanır.
+  const SELECTION_KEY = "kodAnalistSelection";
   fetch("/api/scopes").then((r) => r.json()).then((data) => {
     for (const s of data.scopes) scopeEl.add(new Option(s.label, s.id));
     for (const t of data.topics) topicEl.add(new Option(t.label, t.id));
+    try {
+      const saved = JSON.parse(localStorage.getItem(SELECTION_KEY) || "null");
+      if (saved && [...scopeEl.options].some((o) => o.value === saved.scopeId)) scopeEl.value = saved.scopeId;
+      if (saved && [...topicEl.options].some((o) => o.value === saved.topicId)) topicEl.value = saved.topicId;
+    } catch { /* depolama kapalıysa ilk seçenekler kalır */ }
     renderModes(data.modes || []);
+    if (catalogEnabled) loadCatalog();   // katalog listeden önce yüklendiyse seçime göre yenile
     resumeSavedRun();
   }).catch(() => { /* liste yüklenemezse kapsam olmadan çalışır */ });
 
@@ -349,6 +357,8 @@
 
   // İhale tipi veya konu değişince açık katalog kaydı kapanır ve liste yeni seçime göre yeniden gelir.
   function onSelectionChange() {
+    try { localStorage.setItem(SELECTION_KEY, JSON.stringify({ scopeId: scopeEl.value, topicId: topicEl.value })); }
+    catch { /* depolama kapalı olabilir */ }
     closeCatalogEntry();
     loadCatalog();
   }
@@ -452,7 +462,7 @@
       if (data.length === 0) {
         titleEl.textContent = "Onaylı kurallar";
         bodyEl.innerHTML = query
-          ? `<div class="hint">"${escapeHtml(query)}" ${where} bulunamadı.${scopeEl.value || topicEl.value ? " İhale tipi / konu seçimini \"Tümü\" yaparak tüm katalogda arayabilirsiniz." : ""}</div>`
+          ? `<div class="hint">"${escapeHtml(query)}" ${where} bulunamadı.${scopeEl.value || topicEl.value ? " Başka bir ihale tipi veya konu seçerek orada arayabilirsiniz." : ""}</div>`
           : '<div class="hint">Bu seçimde kataloğa kaydedilmiş onaylı kural yok. Sorunuzu sorun; cevabı onaylarsanız buraya eklenir.</div>';
         return;
       }
@@ -690,7 +700,7 @@
       `<details><summary>Aşama ayrıntısı</summary><div class="table-wrap"><table>` +
         `<tr><th>Aşama</th><th>İstek</th><th>Süre</th><th>Gönderilen girdi</th><th>Önbellekten</th>` +
         `<th>Tam fiyat / yazma</th><th>Faturalanan karşılığı</th><th>Çıktı</th></tr>${rows}</table></div>` +
-        `<p class="usage-note">Faturalanan karşılığı = tam fiyat girdi + önbelleğe yazma × 1,25 + önbellekten okuma × 0,1.</p></details>`;
+        `<p class="usage-note">Faturalanan karşılığı = tam fiyat girdi + önbelleğe yazma × 1,25 (1 saatlik yazma × 2) + önbellekten okuma × 0,1.</p></details>`;
   }
 
   function setBusy(busy, text) {
