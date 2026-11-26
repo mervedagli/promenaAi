@@ -97,9 +97,18 @@ public sealed class AnalystAgent(
 
             {pack}
             """;
-        List<MessageParam> verifyConversation = [new UserMessageParam { Content = verificationRequest }];
         // "single": ek okuma yok, kanıt paketiyle tek model çağrısı. "tools": birkaç ek okumaya izin verilir.
         var verifyTurns = mode.Verify == "single" ? 0 : mode.VerifyMaxToolTurns;
+        if (verifyTurns == 0)
+            verificationRequest += """
+
+
+                ## Bu doğrulamada araç kullanamazsın
+                Dosya okuyamaz, arama yapamazsın; yalnızca yukarıdaki kanıt paketi var. "Okumam gerekiyor" gibi bir
+                ara mesaj YAZMA: doğrudan, istenen biçimde eksiksiz SON cevabı yaz. Pakette görmediğin için
+                doğrulayamadığın iddiaları cevaptan çıkar ya da "Doğrulanamayan noktalar" altında açıkça belirt.
+                """;
+        List<MessageParam> verifyConversation = [new UserMessageParam { Content = verificationRequest }];
         LoopResult verified;
         try
         {
@@ -124,7 +133,30 @@ public sealed class AnalystAgent(
             return;
         }
 
+        // Doğrulayıcı tam bir cevap yerine kısa bir ara mesaj döndürdüyse (ör. "şu kodu okumam gerekiyor")
+        // hazır taslak kaybolmasın: taslağı uyarıyla göster.
+        if (!LooksLikeFullAnswer(verified.Text, draft.Text))
+        {
+            logger.LogWarning("Doğrulayıcı tam cevap döndürmedi ({Length} karakter); taslak gösteriliyor", verified.Text.Length);
+            await emit(new AgentEvent("answer-unverified",
+                "> ⚠️ Doğrulama adımı tam bir cevap üretemedi. Aşağıdaki taslak koda karşı **doğrulanmadı**; " +
+                "kaynaklarına bakarak kontrol edin veya soruyu Derin modda yeniden sorun.\n\n" + draft.Text));
+            return;
+        }
+
         await emit(new AgentEvent("answer", verified.Text));
+    }
+
+    /// <summary>Doğrulanmış metin taslağın yerine geçebilecek tam bir cevap mı?</summary>
+    private static bool LooksLikeFullAnswer(string verified, string draft)
+    {
+        if (string.IsNullOrWhiteSpace(verified)) return false;
+        // Taslakta teknik bölüm varsa son cevapta da olmalı.
+        if (draft.Contains(TechnicalSectionHeading, StringComparison.Ordinal) &&
+            !verified.Contains(TechnicalSectionHeading, StringComparison.Ordinal))
+            return false;
+        // Taslağın çok küçük bir kısmı kadar olan metin cevap değil, ara mesajdır.
+        return verified.Length >= Math.Min(800, draft.Length * 0.3);
     }
 
     private sealed record LoopResult(bool Success, string Text);
