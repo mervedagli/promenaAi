@@ -63,6 +63,16 @@
     :root[data-theme="dark"] .logo-light { display: none; }
     :root[data-theme="dark"] .logo-dark { display: block; }
     :root[data-theme="dark"] .brand { --brand-text: #dbdbdf; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .user-box { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+    .user-box[hidden] { display: none; }
+    .user-box .avatar {
+      width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: 12px;
+    }
+    .user-box .name { color: var(--text); font-weight: 500; }
+    .user-box a { color: var(--muted); }
+    .user-box a:hover { color: var(--text); }
     .theme-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
     .theme-switch button {
       background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 5px 12px;
@@ -203,10 +213,13 @@
       <img class="logo logo-dark" src="img/promena-logo-dark.png" alt="Promena" width="106" height="34">
       <h1><span class="visually-hidden">Promena </span>Rehberi</h1>
     </div>
-    <div class="theme-switch" role="group" aria-label="Tema">
-      <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
-      <button type="button" data-theme-choice="light">Açık</button>
-      <button type="button" data-theme-choice="dark">Koyu</button>
+    <div class="topbar-right">
+      <div id="userBox" class="user-box" hidden></div>
+      <div class="theme-switch" role="group" aria-label="Tema">
+        <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
+        <button type="button" data-theme-choice="light">Açık</button>
+        <button type="button" data-theme-choice="dark">Koyu</button>
+      </div>
     </div>
   </div>
   <p class="subtitle">İş kurallarını sorun; cevaplar kaynak kod incelenerek, sade bir dille ve örneklerle verilir.</p>
@@ -240,6 +253,28 @@
 </main>
 
 <script>
+  // Oturum süresi dolarsa (401) giriş ekranına dön. Giriş kapalıysa sunucu 401 döndürmez.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const res = await nativeFetch(...args);
+    if (res.status === 401) location.href = "/giris";
+    return res;
+  };
+
+  // Giriş yapan kullanıcı (giriş kapalıysa null). Onay formunda onaylayan olarak kullanılır.
+  let currentUser = null;
+  fetch("/api/me").then((r) => (r.ok ? r.json() : null)).then((me) => {
+    if (!me?.authEnabled || !me.signedIn) return;
+    currentUser = me;
+    const box = document.getElementById("userBox");
+    const initials = (me.name || me.email || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toLocaleUpperCase("tr-TR");
+    box.innerHTML = `<span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>` +
+      `<span class="name" title="${escapeHtml(me.email || "")}">${escapeHtml(me.name || me.email)}</span>` +
+      `<a href="/auth/logout">Çıkış</a>`;
+    box.hidden = false;
+    if (lastAsk) showApproveForm();   // açık onay formu varsa adla güncellensin
+  }).catch(() => { /* kullanıcı bilgisi alınamazsa ekran yine çalışır */ });
+
   // Tema seçimi: "system" işletim sisteminin ayarını izler; seçim tarayıcıda hatırlanır.
   (function initThemeSwitch() {
     const buttons = document.querySelectorAll("[data-theme-choice]");
@@ -603,7 +638,9 @@
       : "";
     approveEl.innerHTML = warn + `
       <div class="hint" style="margin-bottom:8px">Cevabı kontrol ettiyseniz kataloğa kaydedin. Aynı veya benzer soru tekrar sorulduğunda model çağrılmadan bu cevap gösterilir; dayandığı kod değişirse "kod değişti" olarak işaretlenir.</div>
-      <input id="approvedBy" placeholder="Adınız (zorunlu)" maxlength="100">
+      ${currentUser
+        ? `<div class="hint" style="margin-bottom:8px">Onaylayan: <strong>${escapeHtml(currentUser.name || currentUser.email)}</strong></div>`
+        : '<input id="approvedBy" placeholder="Adınız (zorunlu)" maxlength="100">'}
       <textarea id="approveNote" placeholder="Not (isteğe bağlı) — ör. düzeltmeler, ekibe bildirilen hatalar"></textarea>
       <button id="approveBtn">Onayla ve kataloğa kaydet</button>
       <span id="approveStatus" class="hint"></span>`;
@@ -611,7 +648,8 @@
   }
 
   async function saveToCatalog() {
-    const approvedBy = document.getElementById("approvedBy").value.trim();
+    // Giriş açıksa onaylayan, giriş yapan hesaptır (sunucu da bunu kullanır).
+    const approvedBy = currentUser ? (currentUser.name || currentUser.email) : document.getElementById("approvedBy").value.trim();
     const note = document.getElementById("approveNote").value.trim();
     const statusSpan = document.getElementById("approveStatus");
     if (!approvedBy) { statusSpan.textContent = "Lütfen adınızı yazın."; return; }

@@ -83,7 +83,16 @@ builder.Services.AddSingleton<AnalystAgent>();
 builder.Services.AddSingleton<AskJobStore>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AskJobStore>());
 
+// Microsoft Entra ID girişi ("AzureAd" ayarları doluysa açılır; boşsa uygulama girişsiz çalışır).
+var authSettings = builder.AddPromenaAuth();
+
 var app = builder.Build();
+
+if (!authSettings.Enabled)
+    app.Logger.LogWarning("Giriş KAPALI: AzureAd:TenantId / AzureAd:ClientId ayarlanmamış. Uygulamayı adresi bilen herkes kullanabilir.");
+
+// Giriş, ana sayfa ve statik dosyalardan önce: giriş yapmayan kullanıcı yalnızca giriş ekranını görür.
+app.UsePromenaAuth(authSettings);
 
 app.UseDefaultFiles();
 // Ekran dosyaları tarayıcıda önbelleğe alınmasın: güncelleme sonrası eski sayfa görünmesin.
@@ -179,12 +188,15 @@ app.MapGet("/api/catalog/{scopeId}/{id}", async (string scopeId, string id, Cata
 
 // Analistin onayladığı cevabı kataloğa kaydeder. Dayanaklar (metotlar ve parmak izleri) sunucuda hesaplanır.
 app.MapPost("/api/catalog", async (SaveCatalogRequest req, CatalogService catalog, SourceTracker tracker,
-    ILogger<Program> logger, CancellationToken ct) =>
+    HttpContext http, ILogger<Program> logger, CancellationToken ct) =>
 {
     if (!catalog.IsConfigured) return Results.Json(new { error = "Katalog yapılandırılmadı." }, statusCode: 503);
     if (string.IsNullOrWhiteSpace(req.Question) || string.IsNullOrWhiteSpace(req.Answer))
         return Results.BadRequest(new { error = "Soru ve cevap boş olamaz." });
-    if (string.IsNullOrWhiteSpace(req.ApprovedBy))
+
+    // Giriş açıksa onaylayan, giriş yapan hesaptır (ekrandan gelen ad dikkate alınmaz; başkası adına onay verilemez).
+    var approvedBy = authSettings.Enabled ? AuthSetup.DisplayName(http.User) : req.ApprovedBy;
+    if (string.IsNullOrWhiteSpace(approvedBy))
         return Results.BadRequest(new { error = "Onaylayan kişinin adı zorunludur." });
 
     var entry = new CatalogEntry
@@ -194,7 +206,7 @@ app.MapPost("/api/catalog", async (SaveCatalogRequest req, CatalogService catalo
         Question = req.Question.Trim(),
         Answer = req.Answer,
         Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
-        ApprovedBy = req.ApprovedBy.Trim(),
+        ApprovedBy = approvedBy.Trim(),
         ApprovedAt = DateTime.UtcNow,
         Mode = string.IsNullOrWhiteSpace(req.Mode) ? null : ResolveMode(req.Mode, false).Id,
         Verified = req.Verified ?? true,
@@ -373,7 +385,7 @@ app.Run();
 // FastMode eski ekranlarla uyumluluk için duruyor; yeni ekran Mode ("fast" / "balanced" / "deep") gönderir.
 public sealed record AskRequest(string Question, string? ScopeId = null, string? TopicId = null, bool FastMode = false, string? Mode = null);
 public sealed record EvidencePreviewRequest(string Draft, string? ScopeId = null, string? TopicId = null);
-public sealed record SaveCatalogRequest(string Question, string Answer, string ApprovedBy, string? ScopeId = null, string? TopicId = null,
+public sealed record SaveCatalogRequest(string Question, string Answer, string? ApprovedBy, string? ScopeId = null, string? TopicId = null,
     string? Note = null, string? Mode = null, bool? Verified = null);
 public sealed record SourcesPreviewRequest(string Answer, string? ScopeId = null);
 public sealed record CatalogMatchRequest(string Question, string? ScopeId = null, string? TopicId = null);

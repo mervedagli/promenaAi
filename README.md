@@ -15,6 +15,38 @@ analiste sade dille ve örneklerle anlatılır, kod referansları ekranda kapal�
 4. Analist cevabı kontrol edip onaylarsa cevap kataloğa kaydedilir (her modda; doğrulanmamışsa öyle işaretlenir);
    dayandığı kod değişirse "kod değişti" olarak işaretlenir.
 
+## Giriş: Microsoft Entra ID
+
+Uygulamaya yalnızca şirket hesabıyla girilir. Kullanıcı giriş ekranında **"Microsoft hesabıyla giriş yap"** düğmesine
+basar, şifresini Microsoft'un giriş sayfasında girer (şirketin MFA ve şifre kuralları geçerlidir) ve uygulamaya döner.
+Şifre bu uygulamaya hiç gelmez. Başka şirketlerin (tenant) hesapları reddedilir.
+
+- Giriş yapmamış kullanıcı her sayfada giriş ekranına (`/giris`) yönlenir; API'ler `401` döner.
+- Sağ üstte giriş yapan kişinin adı ve **Çıkış** bağlantısı görünür. Oturum 10 saat sürer (kullanıldıkça uzar).
+- Kataloğa onaylarken **onaylayan, giriş yapan hesaptır**; ad elle yazılmaz, başkası adına onay verilemez.
+- `AzureAd:TenantId` ve `AzureAd:ClientId` boşsa giriş **kapalıdır** ve uygulama girişsiz çalışır (açılışta uyarı loglanır).
+
+### Kurulum (bir kez, Azure Portal'da)
+
+1. **Microsoft Entra ID → App registrations → New registration**
+   - Name: `Promena Rehberi`
+   - Supported account types: **Accounts in this organizational directory only (Single tenant)**
+   - Redirect URI: platform **Web**, adres `https://localhost:7248/signin-oidc`
+2. Oluşan kayıtta **Authentication** sayfası:
+   - **Implicit grant and hybrid flows** altında **ID tokens** kutusunu işaretleyin.
+   - Yayına alınınca sunucu adresini de ekleyin: `https://<uygulama-adresi>/signin-oidc`.
+3. **Overview** sayfasındaki **Directory (tenant) ID** ve **Application (client) ID** değerlerini
+   `appsettings.Local.json` (yerelde) veya Azure uygulama ayarlarına (`AzureAd__TenantId`, `AzureAd__ClientId`) yazın.
+   Gizli anahtar (client secret) **gerekmez**.
+4. **Yalnızca belirli kişiler girebilsin (önerilen):** **Enterprise applications → Promena Rehberi → Properties →
+   Assignment required? = Yes**, ardından **Users and groups** sayfasından analist grubunu ekleyin. Atanmamış kişiler
+   Microsoft'un giriş sayfasında reddedilir; kod değişikliği gerekmez.
+   - Alternatif: kayıtta **Token configuration → Add groups claim → Security groups** açılıp grup nesne kimlikleri
+     `AzureAd:AllowedGroupIds` listesine yazılır. Grupta olmayan kullanıcı "erişim yetkiniz yok" mesajı görür.
+
+Yerelde Visual Studio'da **https** profiliyle çalıştırın (`https://localhost:7248`). `http` adresinde tarayıcı giriş
+çerezlerini kabul etmediği için giriş tamamlanmaz.
+
 ## Bağlantı kopması ve sayfa yenileme
 
 İnceleme sunucuda tarayıcı bağlantısından bağımsız çalışır (`AskJobs.cs`):
