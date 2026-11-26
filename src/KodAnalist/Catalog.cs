@@ -24,6 +24,17 @@ public sealed class CatalogEntry
     [JsonPropertyName("approvedBy")] public string ApprovedBy { get; set; } = "";
     [JsonPropertyName("approvedAt")] public DateTime ApprovedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>Cevabın üretildiği mod (fast / balanced / deep). Eski kayıtlarda boştur.</summary>
+    [JsonPropertyName("mode")] public string? Mode { get; set; }
+
+    /// <summary>
+    /// Cevap doğrulama aşamasından geçti mi. Hızlı modda üretilip onaylanan cevaplar false olur.
+    /// Eski kayıtlarda alan yoktur (null): o kayıtlar yalnızca doğrulanmış cevaplardan oluştuğu için doğrulanmış sayılır.
+    /// </summary>
+    [JsonPropertyName("verified")] public bool? Verified { get; set; }
+
+    [JsonIgnore] public bool IsVerified => Verified ?? true;
+
     /// <summary>Cevabın dayandığı kod parçaları ve onay anındaki parmak izleri.</summary>
     [JsonPropertyName("sources")] public List<SourceRef> Sources { get; set; } = [];
 }
@@ -254,14 +265,49 @@ public static partial class QuestionMatcher
         return null;
     }
 
+    /// <summary>
+    /// Sorulan soru ile bir katalog kaydı arasındaki benzerlik (0-1). İki ölçünün büyüğü alınır:
+    /// - Soru benzerliği (Jaccard): iki sorunun anlamlı kelimeleri ne kadar örtüşüyor.
+    /// - Kapsama: sorudaki anlamlı kelimelerin ne kadarı kaydın sorusunda veya cevabında geçiyor. Aynı şeyi farklı
+    ///   kelimelerle soran soruları yakalar; cevap metni uzun olduğu için ağırlığı düşüktür (en fazla 0,7) ve
+    ///   tek başına otomatik açma eşiğini geçemez, yalnızca öneri listesine sokar.
+    /// </summary>
+    public static double Score(string query, string entryQuestion, string entryAnswer)
+    {
+        var q = Terms(query);
+        if (q.Count == 0) return 0;
+        var jaccard = Similarity(query, entryQuestion);
+        if (q.Count < 3) return jaccard;   // çok kısa sorularda kapsama yanıltıcı olur
+
+        var analystPart = entryAnswer;
+        var tech = entryAnswer.IndexOf(AnalystAgent.TechnicalSectionHeading, StringComparison.Ordinal);
+        if (tech >= 0) analystPart = entryAnswer[..tech];   // kod terimleri eşleşmeyi şişirmesin
+        var known = Terms(entryQuestion);
+        known.UnionWith(Terms(analystPart));
+        var coverage = (double)q.Count(t => HasMatch(t, known)) / q.Count;
+        return Math.Max(jaccard, 0.7 * coverage);
+    }
+
     /// <summary>0-1 arası benzerlik (Jaccard): ortak anlamlı kelime / toplam anlamlı kelime.</summary>
     public static double Similarity(string a, string b)
     {
         var ta = Terms(a);
         var tb = Terms(b);
         if (ta.Count == 0 || tb.Count == 0) return 0;
-        var common = ta.Count(tb.Contains);
+        var common = Math.Min(ta.Count(t => HasMatch(t, tb)), tb.Count(t => HasMatch(t, ta)));
         return (double)common / (ta.Count + tb.Count - common);
+    }
+
+    /// <summary>
+    /// İki kelime kökü aynı sayılır mı: birebir aynıysa ya da ilk 4 harfi ortaksa. Türkçe eklerde kök
+    /// yaklaşığının son harfi değişebildiği için ("sırasında" → "siras", "sırayla" → "siray") gerekir.
+    /// </summary>
+    private static bool HasMatch(string term, HashSet<string> others)
+    {
+        if (others.Contains(term)) return true;
+        if (term.Length < 4) return false;
+        var prefix = term[..4];
+        return others.Any(o => o.Length >= 4 && o.StartsWith(prefix, StringComparison.Ordinal));
     }
 }
 

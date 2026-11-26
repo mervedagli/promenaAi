@@ -53,7 +53,8 @@
     #steps summary { cursor: pointer; color: var(--muted); font-size: 14px; }
     #steps ol { margin: 8px 0 0; padding-left: 22px; color: var(--muted); font-size: 13px; }
     #steps li { word-break: break-word; }
-    #steps li.phase { list-style: none; margin: 10px 0 4px -22px; color: var(--text); font-weight: 600; }
+    #steps .phase { margin: 10px 0 4px; color: var(--text); font-weight: 600; font-size: 13px; }
+    #steps .phase + ol { margin-top: 0; }
     #answer { margin-top: 20px; }
     #answer:empty { display: none; }
     #answer h1, #answer h2, #answer h3 { line-height: 1.3; margin: 1.2em 0 .5em; }
@@ -111,8 +112,18 @@
     .sync-status:empty { display: none; }
     .sync-status .err { color: var(--error); }
     .sync-status button { padding: 3px 10px; font-size: 12px; }
-    .fast-mode { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--muted); cursor: pointer; }
-    .fast-mode input { margin-top: 3px; }
+    .modes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; border: 0; padding: 0; }
+    .modes legend { font-size: 13px; color: var(--muted); margin-bottom: 4px; padding: 0; }
+    .mode {
+      flex: 1 1 200px; display: flex; gap: 8px; align-items: flex-start; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--muted);
+    }
+    .mode:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .mode input { margin-top: 3px; }
+    .mode strong { color: var(--text); }
+    .badge.info { color: var(--muted); }
+    .match-banner { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .match-banner button { margin-top: 8px; }
     details.tech { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; color: var(--muted); }
     details.tech summary { cursor: pointer; font-weight: 600; }
   </style>
@@ -133,11 +144,9 @@
       </label>
     </div>
     <textarea id="question" placeholder="Örnek: Grup toplamlı ihalede min/max kuralları nelerdir? Teklif verirken validasyonlar hangi sırayla çalışır?"></textarea>
-    <label class="fast-mode">
-      <input type="checkbox" id="fastMode">
-      <span><strong>Hızlı mod</strong> — doğrulama aşaması atlanır, cevap daha kısa sürede gelir. Cevap doğrulanmamış olur
-        ve kataloğa kaydedilemez; hızlı bir fikir edinmek için kullanın, karar vermek için normal modu tercih edin.</span>
-    </label>
+    <fieldset class="modes" id="modes">
+      <legend>Katalogda cevap yoksa model nasıl incelesin?</legend>
+    </fieldset>
     <div class="actions">
       <button id="ask">Sor</button>
       <span id="status" class="hint">Ctrl + Enter ile de gönderebilirsiniz.</span>
@@ -162,13 +171,42 @@
   const catalogEl = document.getElementById("catalog");
   const approveEl = document.getElementById("approve");
   let catalogEnabled = false;
-  let lastAsk = null;   // { question, scopeId, topicId, answer } — onaylama formu için
+  let lastAsk = null;   // { question, scopeId, topicId, answer, mode, verified } — onaylama formu için
 
   // İhale tipi ve konu listelerini sunucudan yükle.
   fetch("/api/scopes").then((r) => r.json()).then((data) => {
     for (const s of data.scopes) scopeEl.add(new Option(s.label, s.id));
     for (const t of data.topics) topicEl.add(new Option(t.label, t.id));
+    renderModes(data.modes || []);
   }).catch(() => { /* liste yüklenemezse kapsam olmadan çalışır */ });
+
+  // Cevap modları (Hızlı / Dengeli / Derin). Seçim tarayıcıda hatırlanır.
+  const modesEl = document.getElementById("modes");
+  let modes = [];
+  function renderModes(list) {
+    modes = list;
+    if (list.length === 0) { modesEl.style.display = "none"; return; }
+    let saved = null;
+    try { saved = localStorage.getItem("kodAnalistMode"); } catch { /* depolama kapalı olabilir */ }
+    const selected = list.find((m) => m.id === saved) || list.find((m) => m.isDefault) || list[0];
+    for (const m of list) {
+      const label = document.createElement("label");
+      label.className = "mode";
+      label.innerHTML = `<input type="radio" name="mode" value="${escapeHtml(m.id)}"${m.id === selected.id ? " checked" : ""}>` +
+        `<span><strong>${escapeHtml(m.label)}</strong><br>${escapeHtml(m.description)}</span>`;
+      label.querySelector("input").addEventListener("change", (e) => {
+        try { localStorage.setItem("kodAnalistMode", e.target.value); } catch { /* yok say */ }
+      });
+      modesEl.appendChild(label);
+    }
+  }
+  function selectedMode() {
+    const id = modesEl.querySelector("input[name=mode]:checked")?.value;
+    return modes.find((m) => m.id === id) || null;
+  }
+  function modeLabel(id) {
+    return modes.find((m) => m.id === id)?.label || id;
+  }
 
   // Repoların otomatik güncellenme durumu (RepoSync açıksa görünür).
   const syncEl = document.getElementById("syncStatus");
@@ -273,6 +311,16 @@
     });
   }
 
+  // Katalog satırlarındaki ortak bilgiler: onaylayan, tarih ve (varsa) doğrulanmamış işareti.
+  function entryMeta(e, extra) {
+    return `${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}` +
+      (e.isVerified === false ? ` · doğrulanmamış${e.mode ? " (" + escapeHtml(modeLabel(e.mode)) + " mod)" : ""}` : "") +
+      (extra ? " · " + extra : "");
+  }
+  function freshnessBadge(e) {
+    return e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>';
+  }
+
   // Aranan kelimeleri alıntıda vurgular (metin önce güvenli hale getirilir).
   function highlight(text, query) {
     let html = escapeHtml(text);
@@ -322,8 +370,8 @@
         li.dataset.key = `${e.scopeId}|${e.id}`;
         const question = query ? highlight(e.question, query) : escapeHtml(e.question);
         const snippet = query && e.snippet ? `<div class="snippet">${highlight(e.snippet, query)}</div>` : "";
-        li.innerHTML = `<span class="arrow">▸</span><div class="q">${question}${snippet}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}</div></div>` +
-          (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>');
+        li.innerHTML = `<span class="arrow">▸</span><div class="q">${question}${snippet}<div class="meta">${entryMeta(e)}</div></div>` +
+          freshnessBadge(e);
         li.addEventListener("click", () => toggleCatalogEntry(e.scopeId, e.id));
         list.appendChild(li);
       }
@@ -333,7 +381,8 @@
     }
   }
 
-  async function openCatalogEntry(scopeId, id) {
+  // banner: katalog eşleşmesiyle (Sor düğmesinden) açıldıysa üstte gösterilecek açıklama (HTML).
+  async function openCatalogEntry(scopeId, id, banner) {
     const res = await fetch(`/api/catalog/${encodeURIComponent(scopeId)}/${encodeURIComponent(id)}`);
     const data = await res.json();
     if (!res.ok) { answerEl.className = "error"; answerEl.textContent = data.error || "Kayıt açılamadı."; return; }
@@ -343,20 +392,24 @@
     const status = data.upToDate
       ? '<span class="badge ok">Kod değişmedi, cevap güncel</span>'
       : `<span class="badge stale">Kod değişti — yeniden doğrulanmalı</span><ul>${data.changes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`;
+    const unverified = e.verified === false
+      ? ` · <span class="badge stale">Doğrulanmamış${e.mode ? " — " + escapeHtml(modeLabel(e.mode)) + " modda üretildi" : ""}</span>`
+      : "";
     answerEl.className = "panel";
-    answerEl.innerHTML =
+    answerEl.innerHTML = (banner ? `<div class="match-banner">${banner}</div>` : "") +
       `<div class="catalog-header"><button class="secondary close-btn" id="closeEntryBtn">Kapat ✕</button>` +
-      `Katalogdan · ${escapeHtml(e.approvedBy)} tarafından ${formatDate(e.approvedAt)} tarihinde onaylandı · ${status}` +
+      `Katalogdan · ${escapeHtml(e.approvedBy)} tarafından ${formatDate(e.approvedAt)} tarihinde onaylandı · ${status}${unverified}` +
       (e.note ? `<div><strong>Not:</strong> ${escapeHtml(e.note)}</div>` : "") + `</div>` +
       `<p><strong>Soru:</strong> ${escapeHtml(e.question)}</p>` + renderAnswer(e.answer);
     document.getElementById("closeEntryBtn").addEventListener("click", closeCatalogEntry);
+    document.getElementById("notThisBtn")?.addEventListener("click", () => ask(true));
     answerFromCatalog = true;
     openEntryKey = `${scopeId}|${id}`;
     markActiveEntry();
     statusEl.textContent = data.upToDate
       ? "Katalogdan gösterildi; model çağrılmadı, token harcanmadı."
       : "Katalogdan gösterildi. Kod değiştiği için yeniden inceleyip cevabı tekrar onaylamanız önerilir.";
-    questionEl.value = e.question;
+    if (!banner) questionEl.value = e.question;   // eşleşmeyle açıldıysa analistin kendi sorusu kutuda kalsın
 
     // Analist isterse aynı soruyu yeniden inceletebilir (yalnızca bu düğmeyle model çalışır).
     approveEl.innerHTML = `
@@ -390,6 +443,22 @@
       await openCatalogEntry(m.exact.scopeId, m.exact.id);
       return true;
     }
+    if (m.best) {
+      // Sorunuza çok yakın, kodu değişmemiş onaylı kural: model çağrılmadan doğrudan açılır.
+      const others = (m.similar || []).map((e) =>
+        `<li data-scope="${escapeHtml(e.scopeId)}" data-id="${escapeHtml(e.id)}"><div class="q">${escapeHtml(e.question)}` +
+        `<div class="meta">${entryMeta(e, "benzerlik %" + Math.round(e.score * 100))}</div></div>${freshnessBadge(e)}</li>`).join("");
+      const banner =
+        `Sorunuza en yakın onaylı kural gösteriliyor (benzerlik %${Math.round(m.best.score * 100)}). ` +
+        `Model çağrılmadı, token harcanmadı.<br><strong>Eşleşen soru:</strong> ${escapeHtml(m.best.question)}` +
+        (others ? `<div style="margin-top:6px">Diğer benzer kurallar:</div><ul class="catalog-list">${others}</ul>` : "") +
+        `<div><button id="notThisBtn" class="secondary">Bu değil, modele sor (${escapeHtml(selectedMode()?.label || "model")} mod)</button></div>`;
+      await openCatalogEntry(m.best.scopeId, m.best.id, banner);
+      for (const li of answerEl.querySelectorAll(".match-banner li[data-id]"))
+        li.addEventListener("click", () => openCatalogEntry(li.dataset.scope, li.dataset.id));
+      statusEl.textContent = "Katalogdan gösterildi; model çağrılmadı, token harcanmadı.";
+      return true;
+    }
     if (m.similar && m.similar.length > 0) {
       stepsEl.innerHTML = "";
       approveEl.innerHTML = "";
@@ -397,12 +466,12 @@
       answerEl.innerHTML = `<h2 style="font-size:16px;margin-top:0">Bu soruya benzer onaylı kurallar var</h2>
         <p class="hint">Aradığınız bunlardan biriyse tıklayın; model çağrılmadan açılır.</p>
         <ul class="catalog-list"></ul>
-        <button id="newAskBtn" class="secondary" style="margin-top:12px">Hiçbiri değil, yeni inceleme başlat (model çalışır)</button>`;
+        <button id="newAskBtn" class="secondary" style="margin-top:12px">Hiçbiri değil, modele sor (${escapeHtml(selectedMode()?.label || "model")} mod)</button>`;
       const list = answerEl.querySelector("ul");
       for (const e of m.similar) {
         const li = document.createElement("li");
-        li.innerHTML = `<div class="q">${escapeHtml(e.question)}<div class="meta">${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)} · benzerlik %${Math.round(e.score * 100)}</div></div>` +
-          (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>');
+        li.innerHTML = `<div class="q">${escapeHtml(e.question)}<div class="meta">${entryMeta(e, "benzerlik %" + Math.round(e.score * 100))}</div></div>` +
+          freshnessBadge(e);
         li.addEventListener("click", () => openCatalogEntry(e.scopeId, e.id));
         list.appendChild(li);
       }
@@ -419,8 +488,12 @@
   // Yapay zekânın cevabının altında: onaylayıp kataloğa kaydetme formu.
   function showApproveForm() {
     if (!catalogEnabled || !lastAsk) { approveEl.innerHTML = ""; return; }
-    approveEl.innerHTML = `
-      <div class="hint" style="margin-bottom:8px">Cevabı kontrol ettiyseniz kataloğa kaydedin. Aynı soru tekrar sorulduğunda model çağrılmadan bu cevap gösterilir; dayandığı kod değişirse "kod değişti" olarak işaretlenir.</div>
+    const warn = lastAsk.verified === false
+      ? `<div class="hint" style="margin-bottom:8px"><span class="badge stale">Doğrulanmamış cevap</span> Bu cevap koda karşı doğrulanmadı.
+         Kaydederseniz katalogda "doğrulanmamış" olarak işaretlenir. Kaydetmeden önce cevabı dikkatle kontrol edin.</div>`
+      : "";
+    approveEl.innerHTML = warn + `
+      <div class="hint" style="margin-bottom:8px">Cevabı kontrol ettiyseniz kataloğa kaydedin. Aynı veya benzer soru tekrar sorulduğunda model çağrılmadan bu cevap gösterilir; dayandığı kod değişirse "kod değişti" olarak işaretlenir.</div>
       <input id="approvedBy" placeholder="Adınız (zorunlu)" maxlength="100">
       <textarea id="approveNote" placeholder="Not (isteğe bağlı) — ör. düzeltmeler, ekibe bildirilen hatalar"></textarea>
       <button id="approveBtn">Onayla ve kataloğa kaydet</button>
@@ -479,10 +552,16 @@
     const question = questionEl.value.trim();
     if (!question) return;
     if (force !== true && await tryCatalogFirst(question)) return;
-    const fastMode = document.getElementById("fastMode").checked;
+    const mode = selectedMode();
 
-    stepsEl.innerHTML = '<details open><summary>İnceleme adımları</summary><ol></ol></details>';
-    const stepList = stepsEl.querySelector("ol");
+    // Her aşamanın adımları ayrı numaralanır (aşama başlığı + kendi listesi).
+    stepsEl.innerHTML = '<details open><summary>İnceleme adımları</summary></details>';
+    const stepsBox = stepsEl.querySelector("details");
+    let stepList = null;
+    function newStepList() {
+      stepList = document.createElement("ol");
+      stepsBox.appendChild(stepList);
+    }
     answerEl.innerHTML = "";
     approveEl.innerHTML = "";
     lastAsk = null;
@@ -499,7 +578,7 @@
           question,
           scopeId: scopeEl.value || null,
           topicId: topicEl.value || null,
-          fastMode,
+          mode: mode?.id || null,
         }),
       });
       if (!res.ok || !res.body) throw new Error("Sunucu hatası (" + res.status + ")");
@@ -509,7 +588,7 @@
       let buffer = "";
       let stepCount = 0;
       let usageText = "";
-      let verifiedRun = true;   // hızlı modda false olur
+      let verifiedRun = true;   // doğrulamasız modda false olur
 
       while (true) {
         const { value, done } = await reader.read();
@@ -524,15 +603,17 @@
           const evt = JSON.parse(chunk.slice(6));
 
           if (evt.Type === "step") {
+            if (!stepList) newStepList();
             const li = document.createElement("li");
             li.textContent = evt.Text;
             stepList.appendChild(li);
             stepCount++;
           } else if (evt.Type === "phase") {
-            const li = document.createElement("li");
-            li.className = "phase";
-            li.textContent = evt.Text;
-            stepList.appendChild(li);
+            const div = document.createElement("div");
+            div.className = "phase";
+            div.textContent = evt.Text;
+            stepsBox.appendChild(div);
+            newStepList();
             setBusy(true, evt.Text + "… (Adımlar ve süre aşağıda görünür.)");
           } else if (evt.Type === "draft") {
             // Doğrulama sürerken taslağı göster; onay formu yalnızca doğrulanmış son halde çıkar.
@@ -543,21 +624,25 @@
               renderAnswer(evt.Text);
             stepsEl.querySelector("details").open = false;
           } else if (evt.Type === "answer-unverified") {
-            // Hızlı mod: doğrulanmamış cevap. Onay formu gösterilmez; kataloğa kaydedilemez.
+            // Doğrulamasız mod (ör. Hızlı): cevap uyarıyla gösterilir. Analist kontrol edip onaylarsa kataloğa
+            // "doğrulanmamış" işaretiyle kaydedilebilir.
             answerEl.className = "panel";
             answerEl.innerHTML =
-              '<div class="catalog-header"><span class="badge stale">Hızlı mod — doğrulanmadı</span> ' +
-              'Bu cevap koda karşı doğrulanmadı ve yanlış ya da eksik bilgi içerebilir. Karar vermeden önce hızlı modu ' +
-              'kapatıp yeniden sorun; doğrulanmış cevabı onaylayıp kataloğa kaydedebilirsiniz.</div>' +
+              `<div class="catalog-header"><span class="badge stale">${escapeHtml(mode?.label || "Hızlı")} mod — doğrulanmadı</span> ` +
+              'Bu cevap koda karşı doğrulanmadı ve yanlış ya da eksik bilgi içerebilir. Kritik bir karar için ' +
+              'Dengeli veya Derin modla yeniden sorun.</div>' +
               renderAnswer(evt.Text);
             stepsEl.querySelector("details").open = false;
-            approveEl.innerHTML = "";
             verifiedRun = false;
+            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text,
+                        mode: mode?.id || null, verified: false };
+            showApproveForm();
           } else if (evt.Type === "answer") {
             answerEl.className = "panel";
             answerEl.innerHTML = renderAnswer(evt.Text);
             stepsEl.querySelector("details").open = false;
-            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text };
+            lastAsk = { question, scopeId: scopeEl.value || null, topicId: topicEl.value || null, answer: evt.Text,
+                        mode: mode?.id || null, verified: true };
             showApproveForm();
           } else if (evt.Type === "usage") {
             usageText = evt.Text;
@@ -567,7 +652,7 @@
           }
         }
       }
-      setBusy(false, stepCount + (verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (hızlı mod, doğrulanmadı).") +
+      setBusy(false, stepCount + (verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (doğrulanmadı).") +
         (usageText ? " " + usageText : ""));
     } catch (err) {
       answerEl.className = "error";
