@@ -26,8 +26,12 @@ analiste sade dille ve örneklerle anlatılır, kod referansları ekranda kapal�
   hesap kilitleme kuralı uygulama üzerinden tetiklenmez. Aynı adresten gelen denemeler de sınırlandırılır.
 - `AllowedEmailDomains`: yalnızca bu uzantılardaki e-postalar. `AllowedGroupDns`: isteğe bağlı, yalnızca bu grupların
   üyeleri (iç içe gruplar dahil).
+- Giriş kutusuna e-posta (`ad@sirket.com`), kullanıcı adı (`ad`) veya `DOMAIN\ad` yazılabilir.
 - Kullanıcı adı biçimi: önce e-posta (UPN), olmazsa `Domain\kullanıcı` denenir. Şirketinizde UPN e-postadan farklıysa
-  `BindFormats` ile değiştirilebilir (ör. `"{user}@promena.local"`).
+  (ör. UPN `ad@sirket.local`, e-posta `ad@sirket.com`) `BindFormats` ile verilir: `["{user}@sirket.local", "{domain}\{user}"]`.
+- E-postanın @ öncesi kullanıcı adından farklıysa (ör. `ad.soyad@` / `adsoyad`) iki yol var: kullanıcı ekrana kullanıcı
+  adını yazar, ya da BT'nin vereceği salt okunur bir servis hesabı `Ldap:ServiceUser` olarak tanımlanır (şifresi
+  user-secrets'a: `Ldap:ServicePassword`); uygulama önce kullanıcıyı e-postasından bulur.
 - **Uygulama domain denetleyicisine ağdan erişebilmelidir.** Şirket ağındaki / VPN'deki bir bilgisayarda sorun yoktur;
   Azure'a yayına alınırsa Azure ile şirket ağı arasında bağlantı (VPN / ExpressRoute) gerekir.
 - LDAPS için domain denetleyicisinin sertifikası çalıştırılan makinede güvenilir olmalıdır (domain bilgisayarlarında
