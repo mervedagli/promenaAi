@@ -1,4 +1,6 @@
-# Kod Analist (pilot)
+# Promena Rehberi (pilot)
+
+> Kod içindeki proje adları (`KodAnalist`, `KodHaritasi`) ve klasör adları değişmedi; yalnızca ürünün görünen adı Promena Rehberi'dir.
 
 Analistlerin iş kurallarıyla ilgili sorularını, üç reponun (promena_frontend, ProSourceCore, Sourcing)
 kaynak kodunu inceleyerek cevaplayan uygulama. Cevaplar Microsoft Foundry üzerindeki Claude modeliyle üretilir;
