@@ -6,11 +6,31 @@ analiste sade dille ve örneklerle anlatılır, kod referansları ekranda kapal�
 
 ## Nasıl çalışır?
 
-1. Analist ihale tipini ve konuyu seçip soruyu yazar. Aynı / benzer soru kural kataloğunda onaylıysa cevap
-   **model çağrılmadan** gelir.
+1. Analist ihale tipini, konuyu ve cevap modunu (Hızlı / Dengeli / Derin) seçip soruyu yazar. Aynı soru ya da
+   çok benzer bir soru kural kataloğunda onaylıysa cevap **model çağrılmadan** gelir.
 2. Değilse Claude, kod haritası ve salt okunur araçlarla kodu inceler (dosya yazamaz, komut çalıştıramaz).
-3. Taslak cevap, program tarafından hazırlanan kanıt paketiyle ayrıca doğrulanır (hızlı modda atlanır).
-4. Analist cevabı kontrol edip onaylarsa cevap kataloğa kaydedilir; dayandığı kod değişirse "kod değişti" olarak işaretlenir.
+3. Taslak cevap, program tarafından hazırlanan kanıt paketiyle ayrıca doğrulanır (Hızlı modda atlanır).
+4. Analist cevabı kontrol edip onaylarsa cevap kataloğa kaydedilir (her modda; doğrulanmamışsa öyle işaretlenir);
+   dayandığı kod değişirse "kod değişti" olarak işaretlenir.
+
+## Cevap modları
+
+Katalogda cevap yoksa modelin ne kadar titiz (ve ne kadar uzun) çalışacağını analist seçer. Seçim tarayıcıda hatırlanır.
+
+| Mod | Düşünme | 1. aşama araç turu | Doğrulama | Hedef süre |
+|---|---|---|---|---|
+| **Hızlı** | low | 10 | yok (cevap "doğrulanmamış" işaretlenir) | 1–2 dk |
+| **Dengeli** (varsayılan) | medium | 20 | kanıt paketiyle tek çağrı, ek okuma yok | 3–4 dk |
+| **Derin** | high | 40 | kanıt paketi + en fazla 8 ek okuma | 8–10 dk |
+
+Süreler hedeftir; gerçek süre sorunun karmaşıklığına ve modele bağlıdır. Her cevabın altında mod, süre ve token özeti
+görünür; ayarları bu değerlere bakarak `appsettings.json` → `AnswerModes` bölümünden değiştirebilirsiniz:
+
+- `Effort`: `low`, `medium`, `high`, `xhigh`, `max`. Düşük seviye daha hızlıdır.
+- `MaxToolTurns`: 1. aşamadaki en fazla araç turu (her tur modele ayrı bir gidiş-dönüştür).
+- `Verify`: `none`, `single` veya `tools`; `VerifyMaxToolTurns` yalnızca `tools` ile kullanılır.
+- `Deployment` (isteğe bağlı): bu mod için Foundry'de farklı bir model dağıtımı (ör. Hızlı mod için daha hızlı bir model).
+- `Default`: ekranda varsayılan seçili mod.
 
 ## Yeni bir bilgisayarda kurulum
 
@@ -170,15 +190,25 @@ Paketi model çağırmadan görmek için: `GET /api/starter-preview?scope=aggreg
 
 Taslak cevap hazırlandıktan sonra program, **model kullanmadan** bir kanıt paketi hazırlar: taslaktaki
 `dosya:satır` referansları, adı geçen metotların gövdeleri, akış ağacı ve akıştaki kontrol metotları
-(ekran, BFF, Sourcing). Ayrı bir doğrulayıcı bu paketle çalışır ve en fazla `Agent:VerifyMaxToolTurns`
-(varsayılan 8) ek okuma yapabilir. Kanıt paketini görmek için: `POST /api/evidence-preview` (`{ "draft": "...", "scopeId": "...", "topicId": "..." }`).
+(ekran, BFF, Sourcing). Ayrı bir doğrulayıcı bu paketle çalışır. Derin modda en fazla `VerifyMaxToolTurns`
+(varsayılan 8) ek okuma yapabilir; Dengeli modda ek okuma yapmadan tek çağrıda doğrular; Hızlı modda bu aşama atlanır. Kanıt paketini görmek için: `POST /api/evidence-preview` (`{ "draft": "...", "scopeId": "...", "topicId": "..." }`).
 
 ## Kural kataloğu (Azure Cosmos DB)
 
 Analistin onayladığı cevaplar Cosmos DB'ye kaydedilir. Aynı ihale tipi / konu seçildiğinde onaylı kurallar listelenir
 ve tıklanınca **model çağrılmadan** açılır.
 
-- Her kayıt: soru, ihale tipi, konu, cevap, not, onaylayan, tarih ve cevabın dayandığı metotlar.
+**"Sor"a basıldığında önce katalog:** Soru, aynı ihale tipindeki onaylı kayıtlarla model kullanmadan karşılaştırılır.
+Benzerlik hem soru metnine hem onaylı cevabın analist bölümüne bakılarak hesaplanır (Türkçe ekler için kelime kökü yaklaşığı).
+- Birebir aynı soru → onaylı cevap doğrudan açılır.
+- Benzerliği `Catalog:AutoOpenThreshold` (varsayılan 0,75) üstünde ve kodu değişmemiş kayıt → doğrudan açılır; üstte
+  eşleşen soru, benzerlik oranı, diğer benzer kurallar ve "Bu değil, modele sor" düğmesi görünür.
+- %50 üstü benzerlikteki diğer kayıtlar → öneri listesi.
+
+Hızlı modda üretilip onaylanan cevaplar katalogda **"doğrulanmamış"** olarak görünür.
+
+- Her kayıt: soru, ihale tipi, konu, cevap, not, onaylayan, tarih, cevabın üretildiği mod, doğrulanıp doğrulanmadığı
+  ve cevabın dayandığı metotlar.
 - **Kod değişikliği takibi:** Dayanaklar metot düzeyinde izlenir (içeriğin SHA-256 parmak izi). Dosyanın başka bir yerine
   kod eklenip satırlar kaysa bile kayıt "değişti" görünmez; yalnızca kuralın dayandığı metot gerçekten değişirse
   **"kod değişti"** olarak işaretlenir ve hangi metodun değiştiği gösterilir. Bu kontrol model kullanmaz.

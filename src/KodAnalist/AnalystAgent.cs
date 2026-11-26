@@ -18,23 +18,24 @@ public sealed class AnalystAgent(
 {
     private const int MaxToolResultChars = 30_000;
 
-    /// <param name="fastMode">
-    /// Hızlı mod: doğrulama aşaması atlanır. Cevap "doğrulanmamış" olarak işaretlenir ve kataloğa kaydedilemez.
+    /// <param name="mode">
+    /// Cevap modu (Hızlı / Dengeli / Derin): düşünme seviyesi, araç turu sınırı ve doğrulama şekli.
+    /// Doğrulama yapılmayan modlarda cevap "doğrulanmamış" olarak işaretlenir; analist yine de onaylayabilir.
     /// </param>
-    public async Task RunAsync(string question, AnalysisScope scope, bool fastMode, Func<AgentEvent, Task> emit, CancellationToken ct)
+    public async Task RunAsync(string question, AnalysisScope scope, AnswerModeOptions mode, Func<AgentEvent, Task> emit, CancellationToken ct)
     {
         var draftUsage = new UsageTotals();
         var verifyUsage = new UsageTotals();
         try
         {
-            await RunPhasesAsync(question, scope, fastMode, emit, ct, draftUsage, verifyUsage);
+            await RunPhasesAsync(question, scope, mode, emit, ct, draftUsage, verifyUsage);
         }
         finally
         {
-            logger.LogInformation("Token kullanımı | 1. aşama: {Draft} | 2. aşama: {Verify} | Soru: {Question}",
-                draftUsage, verifyUsage, question.Length > 80 ? question[..80] + "…" : question);
+            logger.LogInformation("Token kullanımı | Mod: {Mode} | 1. aşama: {Draft} | 2. aşama: {Verify} | Soru: {Question}",
+                mode.Id, draftUsage, verifyUsage, question.Length > 80 ? question[..80] + "…" : question);
             await emit(new AgentEvent("usage",
-                $"Süre: 1. aşama {draftUsage.ModelSeconds:F0} sn ({draftUsage.Requests} istek)" +
+                $"{mode.Label} mod · Süre: 1. aşama {draftUsage.ModelSeconds:F0} sn ({draftUsage.Requests} istek)" +
                 (verifyUsage.Requests > 0 ? $", 2. aşama {verifyUsage.ModelSeconds:F0} sn ({verifyUsage.Requests} istek)" : "") +
                 $" · Token: 1. aşama girdi {draftUsage.TotalInput:N0} ({draftUsage.CacheReadTokens:N0} önbellekten), çıktı {draftUsage.OutputTokens:N0}" +
                 (verifyUsage.Requests > 0
@@ -43,7 +44,7 @@ public sealed class AnalystAgent(
         }
     }
 
-    private async Task RunPhasesAsync(string question, AnalysisScope scope, bool fastMode, Func<AgentEvent, Task> emit, CancellationToken ct,
+    private async Task RunPhasesAsync(string question, AnalysisScope scope, AnswerModeOptions mode, Func<AgentEvent, Task> emit, CancellationToken ct,
         UsageTotals draftUsage, UsageTotals verifyUsage)
     {
         // 1. Aşama: kapsam bilgisiyle kodu incele ve taslak cevabı hazırla.
@@ -61,16 +62,17 @@ public sealed class AnalystAgent(
         firstMessage.AppendLine("## Soru").AppendLine(question);
         List<MessageParam> conversation = [new UserMessageParam { Content = firstMessage.ToString() }];
 
-        var draft = await RunLoopAsync(BuildSystemPrompt(), conversation, scope, agentOptions.MaxToolTurns, emit, ct, draftUsage);
+        var draft = await RunLoopAsync(BuildSystemPrompt(), conversation, scope, mode.MaxToolTurns, mode, emit, ct, draftUsage);
         if (!draft.Success)
         {
             await emit(new AgentEvent("error", draft.Text));
             return;
         }
 
-        if (fastMode || !agentOptions.VerifyAnswers)
+        if (!mode.Verifies || !agentOptions.VerifyAnswers)
         {
-            // Doğrulanmamış cevap: ekranda uyarıyla gösterilir, onay formu çıkmaz (kataloğa kaydedilemez).
+            // Doğrulanmamış cevap: ekranda uyarıyla gösterilir. Analist kontrol edip onaylarsa kataloğa
+            // "doğrulanmamış" işaretiyle kaydedilebilir.
             await emit(new AgentEvent("answer-unverified", draft.Text));
             return;
         }
@@ -96,7 +98,9 @@ public sealed class AnalystAgent(
             {pack}
             """;
         List<MessageParam> verifyConversation = [new UserMessageParam { Content = verificationRequest }];
-        var verified = await RunLoopAsync(BuildVerifierPrompt(), verifyConversation, scope, agentOptions.VerifyMaxToolTurns, emit, ct, verifyUsage);
+        // "single": ek okuma yok, kanıt paketiyle tek model çağrısı. "tools": birkaç ek okumaya izin verilir.
+        var verifyTurns = mode.Verify == "single" ? 0 : mode.VerifyMaxToolTurns;
+        var verified = await RunLoopAsync(BuildVerifierPrompt(), verifyConversation, scope, verifyTurns, mode, emit, ct, verifyUsage);
 
         if (!verified.Success)
         {
@@ -143,7 +147,7 @@ public sealed class AnalystAgent(
     /// böylece aynı konuşma bir sonraki aşamada devam ettirilebilir.
     /// </summary>
     private async Task<LoopResult> RunLoopAsync(
-        string systemPrompt, List<MessageParam> messages, AnalysisScope scope, int maxTurns,
+        string systemPrompt, List<MessageParam> messages, AnalysisScope scope, int maxTurns, AnswerModeOptions mode,
         Func<AgentEvent, Task> emit, CancellationToken ct, UsageTotals usage)
     {
         // Son tur (turn == maxTurns) araçsız çalışır: model araç hakkı bitince elindeki bilgiyle
@@ -158,9 +162,9 @@ public sealed class AnalystAgent(
             var requestTimer = System.Diagnostics.Stopwatch.StartNew();
             var response = await client.Messages.CreateStreaming(new MessageCreateParams
             {
-                Model = foundry.Deployment,
+                Model = string.IsNullOrWhiteSpace(mode.Deployment) ? foundry.Deployment : mode.Deployment,
                 MaxTokens = 64000,
-                OutputConfig = new OutputConfig { Effort = Effort.High },
+                OutputConfig = new OutputConfig { Effort = ParseEffort(mode.Effort) },
                 System = new List<TextBlockParam>
                 {
                     new() { Text = systemPrompt, CacheControl = new CacheControlEphemeral() },
@@ -296,6 +300,16 @@ public sealed class AnalystAgent(
             return ($"HATA: Dosya okunamadı: {ex.Message}", true);
         }
     }
+
+    /// <summary>Ayar dosyasındaki düşünme seviyesi (low/medium/high/xhigh/max). Tanınmayan değer "high" sayılır.</summary>
+    private static Effort ParseEffort(string? effort) => effort?.Trim().ToLowerInvariant() switch
+    {
+        "low" => Effort.Low,
+        "medium" => Effort.Medium,
+        "xhigh" => Effort.Xhigh,
+        "max" => Effort.Max,
+        _ => Effort.High,
+    };
 
     private static string DescribeToolCall(string name, IReadOnlyDictionary<string, JsonElement> input)
     {

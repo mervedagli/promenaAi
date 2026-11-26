@@ -15,6 +15,16 @@ var repos = builder.Configuration.GetSection("Repos").Get<List<RepoConfig>>() ??
 var foundry = builder.Configuration.GetSection("Foundry").Get<FoundryOptions>() ?? new FoundryOptions();
 var agentOptions = builder.Configuration.GetSection("Agent").Get<AgentOptions>() ?? new AgentOptions();
 
+// Cevap modları (Hızlı / Dengeli / Derin). Ayar dosyasında yoksa varsayılanlar kullanılır.
+var answerModes = builder.Configuration.GetSection("AnswerModes").Get<List<AnswerModeOptions>>() is { Count: > 0 } configuredModes
+    ? configuredModes
+    : AnswerModeOptions.Defaults(agentOptions);
+var defaultMode = answerModes.FirstOrDefault(m => m.Default) ?? answerModes[0];
+AnswerModeOptions ResolveMode(string? id, bool fastMode) =>
+    answerModes.FirstOrDefault(m => string.Equals(m.Id, id, StringComparison.OrdinalIgnoreCase))
+    ?? (fastMode ? answerModes.FirstOrDefault(m => !m.Verifies) : null)
+    ?? defaultMode;
+
 // API anahtarı ayar dosyasında değil, ortam değişkeninde / gizli bilgi deposunda tutulur.
 foundry.ApiKey ??= Environment.GetEnvironmentVariable("ANTHROPIC_FOUNDRY_API_KEY");
 
@@ -98,11 +108,12 @@ app.MapPost("/api/sync-now", (RepoSyncOptions opts, RepoSyncService sync) =>
     return Results.Json(new { started = true });
 });
 
-// Ekrandaki ihale tipi ve konu listeleri.
+// Ekrandaki ihale tipi, konu ve cevap modu listeleri.
 app.MapGet("/api/scopes", (ScopeService scopes) => new
 {
     scopes = scopes.Scopes.Select(s => new { s.Id, s.Label }),
     topics = scopes.Topics.Select(t => new { t.Id, t.Label }),
+    modes = answerModes.Select(m => new { m.Id, m.Label, m.Description, m.Verifies, isDefault = m == defaultMode }),
 });
 
 // Model çağırmadan kapsamın ne içerdiğini görmek için (kontrol amaçlı).
@@ -136,7 +147,7 @@ app.MapGet("/api/catalog", async (string? scope, string? topic, CatalogService c
         return Results.Json(entries.Select(e =>
         {
             var f = tracker.Check(e);
-            return new { e.Id, e.ScopeId, e.TopicId, e.Question, e.ApprovedBy, e.ApprovedAt, f.UpToDate, f.Changes };
+            return new { e.Id, e.ScopeId, e.TopicId, e.Question, e.ApprovedBy, e.ApprovedAt, e.IsVerified, e.Mode, f.UpToDate, f.Changes };
         }));
     }
     catch (Exception ex) when (ex is CosmosException or InvalidOperationException or Azure.Identity.AuthenticationFailedException)
@@ -183,6 +194,8 @@ app.MapPost("/api/catalog", async (SaveCatalogRequest req, CatalogService catalo
         Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
         ApprovedBy = req.ApprovedBy.Trim(),
         ApprovedAt = DateTime.UtcNow,
+        Mode = string.IsNullOrWhiteSpace(req.Mode) ? null : ResolveMode(req.Mode, false).Id,
+        Verified = req.Verified ?? true,
         Sources = tracker.ExtractSources(req.Answer, req.ScopeId),
     };
 
@@ -223,6 +236,7 @@ app.MapGet("/api/catalog/search", async (string q, string? scope, string? topic,
                 return new
                 {
                     x.Entry.Id, x.Entry.ScopeId, x.Entry.TopicId, x.Entry.Question, x.Entry.ApprovedBy, x.Entry.ApprovedAt,
+                    x.Entry.IsVerified, x.Entry.Mode,
                     f.UpToDate, f.Changes,
                     snippet = QuestionMatcher.ContainsAllTerms(x.Entry.Question, terms)
                         ? null
@@ -240,11 +254,15 @@ app.MapGet("/api/catalog/search", async (string q, string? scope, string? topic,
 
 // "Sor" düğmesine basıldığında, modeli çağırmadan ÖNCE katalogda aynı veya benzer onaylı soru aranır.
 // Aynı ihale tipi içinde aranır; konu seçildiyse o konudakiler ve konusu belirtilmemiş kayıtlar dahil edilir.
-app.MapPost("/api/catalog/match", async (CatalogMatchRequest req, CatalogService catalog, SourceTracker tracker,
-    ILogger<Program> logger, CancellationToken ct) =>
+// Benzerlik soru metniyle ve onaylı cevabın metniyle birlikte hesaplanır (model kullanılmaz).
+// - exact: birebir aynı soru → doğrudan açılır.
+// - best: benzerliği Catalog:AutoOpenThreshold üstünde ve kodu değişmemiş en iyi kayıt → doğrudan açılır.
+// - similar: diğer benzer kayıtlar → öneri listesi.
+app.MapPost("/api/catalog/match", async (CatalogMatchRequest req, CatalogService catalog, CatalogOptions catalogOptions,
+    SourceTracker tracker, ILogger<Program> logger, CancellationToken ct) =>
 {
     if (!catalog.IsConfigured || string.IsNullOrWhiteSpace(req.Question))
-        return Results.Json(new { exact = (object?)null, similar = Array.Empty<object>() });
+        return Results.Json(new { exact = (object?)null, best = (object?)null, similar = Array.Empty<object>() });
     try
     {
         var scopeId = string.IsNullOrEmpty(req.ScopeId) ? CatalogService.NoScope : req.ScopeId;
@@ -252,29 +270,40 @@ app.MapPost("/api/catalog/match", async (CatalogMatchRequest req, CatalogService
             .Where(e => string.IsNullOrEmpty(req.TopicId) || e.TopicId == null || e.TopicId == req.TopicId)
             .ToList();
 
-        object Summary(CatalogEntry e, double score)
+        object Summary(CatalogEntry e, double score, CatalogFreshness f) => new
         {
-            var f = tracker.Check(e);
-            return new { e.Id, e.ScopeId, e.TopicId, e.Question, e.ApprovedBy, e.ApprovedAt, f.UpToDate, score = Math.Round(score, 2) };
-        }
+            e.Id, e.ScopeId, e.TopicId, e.Question, e.ApprovedBy, e.ApprovedAt, e.IsVerified, e.Mode,
+            f.UpToDate, score = Math.Round(score, 2),
+        };
 
         var exact = entries.FirstOrDefault(e => QuestionMatcher.IsSame(e.Question, req.Question));
-        var similar = entries
+        var ranked = entries
             .Where(e => e != exact)
-            .Select(e => (Entry: e, Score: QuestionMatcher.Similarity(e.Question, req.Question)))
+            .Select(e => (Entry: e, Score: QuestionMatcher.Score(req.Question, e.Question, e.Answer)))
             .Where(x => x.Score >= QuestionMatcher.SimilarThreshold)
             .OrderByDescending(x => x.Score)
-            .Take(3)
-            .Select(x => Summary(x.Entry, x.Score))
+            .Take(4)
+            .Select(x => (x.Entry, x.Score, Fresh: tracker.Check(x.Entry)))
             .ToList();
 
-        return Results.Json(new { exact = exact == null ? null : Summary(exact, 1), similar });
+        // En iyi eşleşme yeterince yakın ve kodu değişmemişse model çağrılmadan doğrudan açılır.
+        var top = ranked.FirstOrDefault();
+        var best = exact == null && top.Entry != null && top.Score >= catalogOptions.AutoOpenThreshold && top.Fresh.UpToDate
+            ? Summary(top.Entry, top.Score, top.Fresh)
+            : null;
+        var similar = ranked
+            .Where(x => best == null || x.Entry != top.Entry)
+            .Take(3)
+            .Select(x => Summary(x.Entry, x.Score, x.Fresh))
+            .ToList();
+
+        return Results.Json(new { exact = exact == null ? null : Summary(exact, 1, tracker.Check(exact)), best, similar });
     }
     catch (Exception ex) when (ex is CosmosException or InvalidOperationException or Azure.Identity.AuthenticationFailedException)
     {
         // Katalog erişilemiyorsa soru yine de sorulabilsin: eşleşme yok gibi davran.
         logger.LogError(ex, "Katalog eşleştirmesi yapılamadı");
-        return Results.Json(new { exact = (object?)null, similar = Array.Empty<object>(), error = "Kataloğa erişilemedi." });
+        return Results.Json(new { exact = (object?)null, best = (object?)null, similar = Array.Empty<object>(), error = "Kataloğa erişilemedi." });
     }
 });
 
@@ -302,7 +331,7 @@ app.MapPost("/api/ask", async (AskRequest request, AnalystAgent agent, ScopeServ
     try
     {
         var scope = scopes.Build(request.ScopeId, request.TopicId);
-        await agent.RunAsync(request.Question.Trim(), scope, request.FastMode, Emit, http.RequestAborted);
+        await agent.RunAsync(request.Question.Trim(), scope, ResolveMode(request.Mode, request.FastMode), Emit, http.RequestAborted);
     }
     catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested)
     {
@@ -317,8 +346,10 @@ app.MapPost("/api/ask", async (AskRequest request, AnalystAgent agent, ScopeServ
 
 app.Run();
 
-public sealed record AskRequest(string Question, string? ScopeId = null, string? TopicId = null, bool FastMode = false);
+// FastMode eski ekranlarla uyumluluk için duruyor; yeni ekran Mode ("fast" / "balanced" / "deep") gönderir.
+public sealed record AskRequest(string Question, string? ScopeId = null, string? TopicId = null, bool FastMode = false, string? Mode = null);
 public sealed record EvidencePreviewRequest(string Draft, string? ScopeId = null, string? TopicId = null);
-public sealed record SaveCatalogRequest(string Question, string Answer, string ApprovedBy, string? ScopeId = null, string? TopicId = null, string? Note = null);
+public sealed record SaveCatalogRequest(string Question, string Answer, string ApprovedBy, string? ScopeId = null, string? TopicId = null,
+    string? Note = null, string? Mode = null, bool? Verified = null);
 public sealed record SourcesPreviewRequest(string Answer, string? ScopeId = null);
 public sealed record CatalogMatchRequest(string Question, string? ScopeId = null, string? TopicId = null);
