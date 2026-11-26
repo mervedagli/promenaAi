@@ -192,6 +192,10 @@ public static class AuthSetup
             {
                 authEnabled = settings.Enabled,
                 mode = settings.Mode,
+                // Giriş ekranındaki örnek e-posta için şirket uzantısı (LDAP).
+                emailDomain = settings.Mode == "ldap"
+                    ? http.RequestServices.GetRequiredService<LdapOptions>().AllowedEmailDomains.FirstOrDefault()
+                    : null,
                 signedIn,
                 name = signedIn ? DisplayName(user) : null,
                 email = signedIn ? Email(user) : null,

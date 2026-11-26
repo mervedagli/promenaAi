@@ -119,7 +119,7 @@
     <form id="ldapForm" class="method method-ldap" novalidate>
       <div class="field">
         <label for="email">E-posta</label>
-        <input id="email" name="email" type="email" autocomplete="username" placeholder="ad.soyad@promena.net" required>
+        <input id="email" name="email" type="text" inputmode="email" autocomplete="username" spellcheck="false" placeholder="kullaniciadi@sirket.com" required>
       </div>
       <div class="field">
         <label for="password">Şifre</label>
@@ -180,6 +180,7 @@
       if (!me.authEnabled || (me.signedIn && !params.has("hata") && !params.has("cikis"))) { location.replace("/"); return; }
       document.body.dataset.mode = me.mode;
       if (me.mode === "ldap") {
+        if (me.emailDomain) emailEl.placeholder = "kullaniciadi@" + me.emailDomain;
         try { const last = localStorage.getItem("promenaRehberiEposta"); if (last) emailEl.value = last; } catch { }
         (emailEl.value ? pwEl : emailEl).focus();
       }
@@ -206,7 +207,8 @@
       e.preventDefault();
       const email = emailEl.value.trim();
       const password = pwEl.value;
-      if (!email || !email.includes("@")) { showError("Şirket e-posta adresinizi yazın."); emailEl.focus(); return; }
+      // E-posta yerine kullanıcı adı (ör. merveda veya KOCZER\merveda) da yazılabilir.
+      if (!email) { showError("Şirket e-posta adresinizi yazın."); emailEl.focus(); return; }
       if (!password) { showError("Şifrenizi yazın."); pwEl.focus(); return; }
       submitBtn.disabled = true;
       submitBtn.textContent = "Giriş yapılıyor…";

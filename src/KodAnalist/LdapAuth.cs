@@ -30,10 +30,20 @@ public sealed class LdapOptions
     public string? BaseDn { get; set; }
 
     /// <summary>
-    /// Bağlanırken denenecek kullanıcı adı biçimleri, sırayla. {email}: yazılan e-posta, {user}: e-postanın @ öncesi,
-    /// {domain}: Domain ayarı. Boşsa Active Directory için varsayılanlar: "{email}" (UPN) ve "{domain}\{user}".
+    /// Bağlanırken denenecek kullanıcı adı biçimleri, sırayla. {email}: yazılan e-posta (yalnızca @ içeriyorsa),
+    /// {user}: e-postanın @ öncesi veya yazılan kullanıcı adı, {domain}: Domain ayarı. Boşsa Active Directory için
+    /// varsayılanlar: "{email}" (UPN) ve "{domain}\{user}". Kullanıcı adı (UPN) e-postadan farklıysa
+    /// ör. "{user}@sirket.local" eklenir.
     /// </summary>
     public string[] BindFormats { get; set; } = [];
+
+    /// <summary>
+    /// İsteğe bağlı salt okunur servis hesabı (ör. "KOCZER\svc-rehberi"). Doluysa giriş öncesi kullanıcı dizinde
+    /// e-posta / kullanıcı adıyla aranır ve bulunan hesapla doğrulanır. E-postanın @ öncesi kullanıcı adından farklıysa
+    /// gerekir. Şifresi ayar dosyasına değil user-secrets'a yazılır ("Ldap:ServicePassword").
+    /// </summary>
+    public string? ServiceUser { get; set; }
+    public string? ServicePassword { get; set; }
 
     /// <summary>Yalnızca bu uzantılardaki e-postalar kabul edilir (ör. "promena.net"). Boşsa uzantı kısıtı yok.</summary>
     public string[] AllowedEmailDomains { get; set; } = [];
@@ -66,22 +76,44 @@ public sealed class LdapAuthService(LdapOptions options, ILogger<LdapAuthService
 
     private readonly ConcurrentDictionary<string, List<DateTime>> _failures = new();
 
-    public async Task<LdapLoginResult> LoginAsync(string? email, string? password, string? clientIp)
+    /// <param name="login">E-posta ("ad@sirket.com"), kullanıcı adı ("merveda") veya "DOMAIN\kullanici".</param>
+    public async Task<LdapLoginResult> LoginAsync(string? login, string? password, string? clientIp)
     {
-        email = (email ?? "").Trim();
-        if (email.Length is 0 or > 256 || string.IsNullOrEmpty(password) || password.Length > 256 || !email.Contains('@'))
+        login = (login ?? "").Trim();
+        if (login.Length is 0 or > 256 || string.IsNullOrEmpty(password) || password.Length > 256)
             return new(LdapLoginStatus.InvalidCredentials);
 
-        var emailKey = "e:" + email.ToLowerInvariant();
+        // Yazılanı çöz: e-posta, DOMAIN\kullanıcı veya yalnızca kullanıcı adı.
+        string? email = null, user, domainPrefix = null;
+        if (login.Contains('\\'))
+        {
+            domainPrefix = login[..login.IndexOf('\\')];
+            user = login[(login.IndexOf('\\') + 1)..];
+        }
+        else if (login.Contains('@'))
+        {
+            email = login;
+            user = login[..login.IndexOf('@')];
+        }
+        else user = login;
+
+        // Aynı kişinin farklı yazımları tek sayaçta toplanır.
+        var userKey = "u:" + user.ToLowerInvariant();
         var ipKey = "ip:" + (clientIp ?? "?");
-        if (IsBlocked(emailKey) || IsBlocked(ipKey, MaxFailures * 4))
+        if (IsBlocked(userKey) || IsBlocked(ipKey, MaxFailures * 4))
             return new(LdapLoginStatus.TooManyAttempts);
 
-        var domainPart = email[(email.IndexOf('@') + 1)..];
-        if (options.AllowedEmailDomains.Length > 0 &&
-            !options.AllowedEmailDomains.Any(d => string.Equals(d.Trim().TrimStart('@'), domainPart, StringComparison.OrdinalIgnoreCase)))
+        var allowed = user.Length > 0 && !user.Any(c => c is '@' or '\\');
+        if (email != null && options.AllowedEmailDomains.Length > 0)
         {
-            RecordFailure(emailKey); RecordFailure(ipKey);
+            var domainPart = email[(email.IndexOf('@') + 1)..];
+            allowed &= options.AllowedEmailDomains.Any(d => string.Equals(d.Trim().TrimStart('@'), domainPart, StringComparison.OrdinalIgnoreCase));
+        }
+        if (domainPrefix != null && !string.IsNullOrWhiteSpace(options.Domain))
+            allowed &= string.Equals(domainPrefix, options.Domain, StringComparison.OrdinalIgnoreCase);
+        if (!allowed)
+        {
+            RecordFailure(userKey); RecordFailure(ipKey);
             return new(LdapLoginStatus.InvalidCredentials);
         }
 
@@ -89,7 +121,7 @@ public sealed class LdapAuthService(LdapOptions options, ILogger<LdapAuthService
         try
         {
             // LDAP kütüphanesi eşzamanlı çalışır; isteği bekletmemek için arka planda.
-            result = await Task.Run(() => Authenticate(email, password));
+            result = await Task.Run(() => Authenticate(email, user, password));
         }
         catch (Exception ex)
         {
@@ -99,27 +131,36 @@ public sealed class LdapAuthService(LdapOptions options, ILogger<LdapAuthService
 
         if (result.Status == LdapLoginStatus.Success)
         {
-            _failures.TryRemove(emailKey, out _);
+            _failures.TryRemove(userKey, out _);
             logger.LogInformation("Giriş: {Email}", result.User!.Email);
         }
         else if (result.Status is LdapLoginStatus.InvalidCredentials or LdapLoginStatus.NotAllowed)
         {
-            RecordFailure(emailKey); RecordFailure(ipKey);
-            logger.LogWarning("Başarısız giriş ({Status}): {Email}", result.Status, email);
+            RecordFailure(userKey); RecordFailure(ipKey);
+            logger.LogWarning("Başarısız giriş ({Status}): {Login}", result.Status, login);
         }
         return result;
     }
 
-    private LdapLoginResult Authenticate(string email, string password)
+    private LdapLoginResult Authenticate(string? email, string user, string password)
     {
-        var user = email[..email.IndexOf('@')];
         var formats = options.BindFormats.Length > 0
             ? options.BindFormats
             : string.IsNullOrWhiteSpace(options.Domain) ? ["{email}"] : ["{email}", "{domain}\\{user}"];
 
+        var bindNames = new List<string>();
+        // Servis hesabı varsa önce kullanıcıyı dizinde bul (e-posta kullanıcı adından farklı olabilir).
+        var found = LookupWithServiceAccount(email, user);
+        if (found != null) bindNames.Add(found);
         foreach (var format in formats)
         {
-            var bindName = format.Replace("{email}", email).Replace("{user}", user).Replace("{domain}", options.Domain ?? "");
+            if (email == null && format.Contains("{email}")) continue;
+            var name = format.Replace("{email}", email ?? "").Replace("{user}", user).Replace("{domain}", options.Domain ?? "");
+            if (!bindNames.Contains(name, StringComparer.OrdinalIgnoreCase)) bindNames.Add(name);
+        }
+
+        foreach (var bindName in bindNames)
+        {
             using var connection = Connect();
             try
             {
@@ -132,8 +173,8 @@ public sealed class LdapAuthService(LdapOptions options, ILogger<LdapAuthService
 
             // Şifre doğru. Kullanıcının adını, e-postasını ve gruplarını kendi yetkisiyle oku.
             var entry = FindUser(connection, email, user);
-            var name = Attr(entry, "displayName") ?? Attr(entry, "cn") ?? email;
-            var mail = Attr(entry, "mail") ?? Attr(entry, "userPrincipalName") ?? email;
+            var name = Attr(entry, "displayName") ?? Attr(entry, "cn") ?? email ?? user;
+            var mail = Attr(entry, "mail") ?? Attr(entry, "userPrincipalName") ?? email ?? user;
             var groups = entry?.Attributes["memberOf"] is { } memberOf
                 ? memberOf.GetValues(typeof(string)).Cast<string>().ToList()
                 : [];
@@ -158,13 +199,31 @@ public sealed class LdapAuthService(LdapOptions options, ILogger<LdapAuthService
         return connection;
     }
 
-    private SearchResultEntry? FindUser(LdapConnection connection, string email, string user)
+    /// <summary>Servis hesabıyla kullanıcının dizindeki adını (DN) bulur; servis hesabı yoksa veya bulunamazsa null.</summary>
+    private string? LookupWithServiceAccount(string? email, string user)
+    {
+        if (string.IsNullOrWhiteSpace(options.ServiceUser) || string.IsNullOrEmpty(options.ServicePassword)) return null;
+        try
+        {
+            using var connection = Connect();
+            connection.Bind(new NetworkCredential(options.ServiceUser, options.ServicePassword));
+            return FindUser(connection, email, user)?.DistinguishedName;
+        }
+        catch (LdapException ex) when (ex.ErrorCode == 49)
+        {
+            logger.LogError("LDAP servis hesabıyla bağlanılamadı (kullanıcı adı / şifre hatalı): {User}", options.ServiceUser);
+            return null;
+        }
+    }
+
+    private SearchResultEntry? FindUser(LdapConnection connection, string? email, string user)
     {
         try
         {
             var baseDn = string.IsNullOrWhiteSpace(options.BaseDn) ? DefaultNamingContext(connection) : options.BaseDn;
             if (string.IsNullOrEmpty(baseDn)) return null;
-            var filter = $"(|(userPrincipalName={Escape(email)})(mail={Escape(email)})(sAMAccountName={Escape(user)})(uid={Escape(user)}))";
+            var byEmail = email == null ? "" : $"(userPrincipalName={Escape(email)})(mail={Escape(email)})";
+            var filter = $"(|{byEmail}(sAMAccountName={Escape(user)})(uid={Escape(user)}))";
             var response = (SearchResponse)connection.SendRequest(new SearchRequest(baseDn, filter, SearchScope.Subtree,
                 "displayName", "cn", "mail", "userPrincipalName", "memberOf"));
             return response.Entries.Count > 0 ? response.Entries[0] : null;
