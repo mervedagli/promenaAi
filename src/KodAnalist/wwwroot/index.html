@@ -12,8 +12,9 @@
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     } catch { /* depolama kapalıysa sistem teması kullanılır */ }
   </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <!-- Cevap biçimlendirme kütüphaneleri uygulamayla birlikte gelir (internet / CDN erişimi gerekmez). -->
+  <script src="lib/marked.min.js"></script>
+  <script src="lib/purify.min.js"></script>
   <style>
     :root {
       --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085;
@@ -600,7 +601,10 @@
     }
   }
 
+  // Kütüphaneler bir sebeple yüklenemezse cevap kaybolmasın: düz metin olarak gösterilir.
   function renderMarkdown(md) {
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined")
+      return `<div style="white-space:pre-wrap">${escapeHtml(md)}</div>`;
     return DOMPurify.sanitize(marked.parse(md));
   }
 
@@ -755,7 +759,13 @@
           if (evt.Seq < run.next) continue;   // yeniden bağlanınca tekrar gelen olay
           run.next = evt.Seq + 1;
         }
-        handleEvent(evt, run);
+        try {
+          handleEvent(evt, run);
+        } catch (err) {
+          // Gösterim hatası bağlantı kopması sanılıp yutulmasın; görünür olsun.
+          console.error(err);
+          showNotice("Cevap ekranda gösterilirken bir hata oluştu: " + err.message);
+        }
       }
     }
   }
