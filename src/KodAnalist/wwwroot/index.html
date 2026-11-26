@@ -143,6 +143,29 @@
     .badge.ok { color: var(--ok); border-color: var(--ok); }
     .badge.stale { color: var(--warn); border-color: var(--warn); }
     .catalog-header { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    /* Token kullanımı özeti */
+    #usage:empty { display: none; }
+    #usage { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+    .usage-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .usage-tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+    .usage-tile .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .usage-tile .k { font-size: 12px; color: var(--muted); }
+    .usage-tile.main { border-color: var(--accent); }
+    .usage-tile.main .v { color: var(--accent); }
+    .usage-note { font-size: 13px; color: var(--muted); margin: 10px 0 0; line-height: 1.5; }
+    .usage-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 10px; background: var(--border); }
+    .usage-bar span { display: block; height: 100%; }
+    .usage-bar .cached { background: #3fa37a; }
+    .usage-bar .full { background: #d98b2b; }
+    .usage-legend { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; gap: 14px; flex-wrap: wrap; }
+    .usage-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    #usage details { margin-top: 10px; font-size: 13px; }
+    #usage summary { cursor: pointer; color: var(--muted); }
+    #usage table { width: 100%; border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+    #usage th, #usage td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    #usage th:first-child, #usage td:first-child { text-align: left; }
+    #usage th { color: var(--muted); font-weight: 500; }
+    #usage .table-wrap { overflow-x: auto; }
     .catalog-header ul { margin: 6px 0 0; padding-left: 20px; color: var(--warn); }
     #approve { margin-top: 12px; }
     #approve:empty { display: none; }
@@ -206,6 +229,7 @@
       <button id="ask">Sor</button>
       <span id="status" class="hint">Ctrl + Enter ile de gönderebilirsiniz.</span>
     </div>
+    <div id="usage"></div>
   </div>
 
   <div id="catalog" class="panel"></div>
@@ -620,6 +644,55 @@
       `<details class="tech"><summary>Teknik dayanaklar (geliştiriciler için)</summary>${renderMarkdown(techPart)}</details>`;
   }
 
+  // ---------------- Token kullanımı özeti ----------------
+  const usageEl = document.getElementById("usage");
+
+  function fmtTokens(n) {
+    if (n >= 1e6) return (n / 1e6).toLocaleString("tr-TR", { maximumFractionDigits: 2 }) + " milyon";
+    if (n >= 1e4) return Math.round(n / 1e3).toLocaleString("tr-TR") + " bin";
+    if (n >= 1e3) return (n / 1e3).toLocaleString("tr-TR", { maximumFractionDigits: 1 }) + " bin";
+    return n.toLocaleString("tr-TR");
+  }
+  function fmtSeconds(s) {
+    s = Math.round(s);
+    return s < 60 ? s + " sn" : Math.floor(s / 60) + " dk " + (s % 60) + " sn";
+  }
+
+  // Sunucudan gelen JSON'u (mod + aşamalar) özet kartları, açıklama ve aşama tablosu olarak çizer.
+  // Eski biçimdeki düz metin gelirse olduğu gibi gösterilir.
+  function renderUsage(text) {
+    let data;
+    try { data = JSON.parse(text); } catch { usageEl.innerHTML = `<p class="usage-note">${escapeHtml(text)}</p>`; return; }
+    const sum = k => data.phases.reduce((a, p) => a + (p[k] || 0), 0);
+    const input = sum("input"), cacheRead = sum("cacheRead"), billed = sum("billedInput");
+    const output = sum("output"), requests = sum("requests"), seconds = sum("seconds");
+    const cachedPct = input ? Math.round(cacheRead * 100 / input) : 0;
+
+    const rows = data.phases.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${p.requests}</td><td>${fmtSeconds(p.seconds)}</td>` +
+      `<td>${p.input.toLocaleString("tr-TR")}</td><td>${p.cacheRead.toLocaleString("tr-TR")}</td>` +
+      `<td>${(p.uncached + p.cacheWrite).toLocaleString("tr-TR")}</td><td><strong>${p.billedInput.toLocaleString("tr-TR")}</strong></td>` +
+      `<td>${p.output.toLocaleString("tr-TR")}</td></tr>`).join("");
+
+    usageEl.innerHTML =
+      `<div class="usage-tiles">` +
+        `<div class="usage-tile main"><div class="v">≈ ${fmtTokens(billed)}</div><div class="k">Faturaya yansıyan girdi token'ı</div></div>` +
+        `<div class="usage-tile"><div class="v">${fmtTokens(output)}</div><div class="k">Çıktı token'ı (cevap + düşünme)</div></div>` +
+        `<div class="usage-tile"><div class="v">${fmtSeconds(seconds)}</div><div class="k">Süre · ${escapeHtml(data.mode || "")} mod</div></div>` +
+        `<div class="usage-tile"><div class="v">${requests}</div><div class="k">Model isteği</div></div>` +
+      `</div>` +
+      `<div class="usage-bar" title="Gönderilen girdinin önbellekten okunan kısmı">` +
+        `<span class="cached" style="width:${cachedPct}%"></span><span class="full" style="width:${100 - cachedPct}%"></span></div>` +
+      `<div class="usage-legend"><span><i style="background:#3fa37a"></i>Önbellekten: %${cachedPct} (onda bir fiyat)</span>` +
+        `<span><i style="background:#d98b2b"></i>Tam fiyat: %${100 - cachedPct}</span></div>` +
+      `<p class="usage-note">Model her adımda o ana kadar okunan kodu yeniden alır; bu yüzden ${requests} istekte toplam ` +
+        `<strong>${fmtTokens(input)}</strong> girdi gönderildi. Bunun %${cachedPct}'i önbellekten okunduğu ve normal fiyatın ` +
+        `onda biriyle faturalandığı için faturaya yaklaşık <strong>${fmtTokens(billed)}</strong> normal girdi token'ı olarak yansır.</p>` +
+      `<details><summary>Aşama ayrıntısı</summary><div class="table-wrap"><table>` +
+        `<tr><th>Aşama</th><th>İstek</th><th>Süre</th><th>Gönderilen girdi</th><th>Önbellekten</th>` +
+        `<th>Tam fiyat / yazma</th><th>Faturalanan karşılığı</th><th>Çıktı</th></tr>${rows}</table></div>` +
+        `<p class="usage-note">Faturalanan karşılığı = tam fiyat girdi + önbelleğe yazma × 1,25 + önbellekten okuma × 0,1.</p></details>`;
+  }
+
   function setBusy(busy, text) {
     askBtn.disabled = busy;
     statusEl.innerHTML = busy ? '<span class="spinner"></span> ' + text : text;
@@ -659,6 +732,7 @@
     answerEl.className = "";
     answerEl.innerHTML = "";
     approveEl.innerHTML = "";
+    usageEl.innerHTML = "";
     clearNotice();
     lastAsk = null;
     answerFromCatalog = false;   // cevap alanı artık yapay zekâ cevabını gösterecek
@@ -722,6 +796,7 @@
       showApproveForm();
     } else if (evt.Type === "usage") {
       run.usageText = evt.Text;
+      renderUsage(evt.Text);
     } else if (evt.Type === "error") {
       run.failed = true;
       if (run.hasAnswer) {
@@ -812,7 +887,7 @@
     const summary = run.failed
       ? "İnceleme tamamlanamadı (ayrıntı yukarıda)."
       : run.stepCount + (run.verifiedRun ? " adımda incelendi ve doğrulandı." : " adımda incelendi (doğrulanmadı).");
-    setBusy(false, summary + (run.usageText ? " " + run.usageText : ""));
+    setBusy(false, summary);
   }
 
   // force = true: katalog kontrolünü atla, modeli doğrudan çalıştır ("Yeniden incele" / "Hiçbiri değil").

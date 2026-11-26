@@ -34,13 +34,10 @@ public sealed class AnalystAgent(
         {
             logger.LogInformation("Token kullanımı | Mod: {Mode} | 1. aşama: {Draft} | 2. aşama: {Verify} | Soru: {Question}",
                 mode.Id, draftUsage, verifyUsage, question.Length > 80 ? question[..80] + "…" : question);
-            await emit(new AgentEvent("usage",
-                $"{mode.Label} mod · Süre: 1. aşama {draftUsage.ModelSeconds:F0} sn ({draftUsage.Requests} istek)" +
-                (verifyUsage.Requests > 0 ? $", 2. aşama {verifyUsage.ModelSeconds:F0} sn ({verifyUsage.Requests} istek)" : "") +
-                $" · Token: 1. aşama girdi {draftUsage.TotalInput:N0} ({draftUsage.CacheReadTokens:N0} önbellekten), çıktı {draftUsage.OutputTokens:N0}" +
-                (verifyUsage.Requests > 0
-                    ? $" · 2. aşama girdi {verifyUsage.TotalInput:N0} ({verifyUsage.CacheReadTokens:N0} önbellekten), çıktı {verifyUsage.OutputTokens:N0}"
-                    : "")));
+            // Ekran bu JSON'dan anlaşılır bir özet ve aşama tablosu çizer.
+            var phases = new List<object> { draftUsage.ToReport("1. aşama · İnceleme") };
+            if (verifyUsage.Requests > 0) phases.Add(verifyUsage.ToReport("2. aşama · Doğrulama"));
+            await emit(new AgentEvent("usage", JsonSerializer.Serialize(new { mode = mode.Label, phases })));
         }
     }
 
@@ -173,6 +170,25 @@ public sealed class AnalystAgent(
         public double ToolSeconds;        // araçlarda (okuma, arama) geçen toplam süre
 
         public long TotalInput => InputTokens + CacheWriteTokens + CacheReadTokens;
+
+        /// <summary>
+        /// Faturaya yansıyan girdi, normal girdi token'ı karşılığı olarak: önbellekten okuma 0,1 kat,
+        /// önbelleğe yazma 1,25 kat, diğer girdi tam fiyat.
+        /// </summary>
+        public long BilledInputEquivalent => (long)Math.Round(InputTokens + CacheWriteTokens * 1.25 + CacheReadTokens * 0.1);
+
+        public object ToReport(string name) => new
+        {
+            name,
+            requests = Requests,
+            seconds = Math.Round(ModelSeconds + ToolSeconds),
+            input = TotalInput,
+            cacheRead = CacheReadTokens,
+            cacheWrite = CacheWriteTokens,
+            uncached = InputTokens,
+            billedInput = BilledInputEquivalent,
+            output = OutputTokens,
+        };
 
         public void Add(Usage usage)
         {
