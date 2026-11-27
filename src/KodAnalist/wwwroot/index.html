@@ -64,6 +64,11 @@
     :root[data-theme="dark"] .logo-dark { display: block; }
     :root[data-theme="dark"] .brand { --brand-text: #dbdbdf; }
     .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .top-nav { display: flex; gap: 4px; }
+    .top-nav a { padding: 5px 10px; border-radius: 8px; font-size: 13px; color: var(--muted); text-decoration: none; }
+    .top-nav a:hover { color: var(--text); background: var(--code-bg); }
+    .top-nav a[aria-current="page"] { color: var(--text); font-weight: 600; background: var(--code-bg); }
+    .catalog-all { font-size: 13px; white-space: nowrap; }
     .user-box { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
     .user-box[hidden] { display: none; }
     .user-box .avatar {
@@ -224,6 +229,10 @@
       <h1><span class="visually-hidden">Promena </span>Rehberi</h1>
     </div>
     <div class="topbar-right">
+      <nav class="top-nav" aria-label="Sayfalar">
+        <a href="/" aria-current="page">Soru sor</a>
+        <a href="/rules" id="rulesNavLink">Onaylı kurallar</a>
+      </nav>
       <div id="userBox" class="user-box" hidden></div>
       <div class="theme-switch" role="group" aria-label="Tema">
         <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
@@ -326,6 +335,16 @@
       if (saved && [...scopeEl.options].some((o) => o.value === saved.scopeId)) scopeEl.value = saved.scopeId;
       if (saved && [...topicEl.options].some((o) => o.value === saved.topicId)) topicEl.value = saved.topicId;
     } catch { /* depolama kapalıysa ilk seçenekler kalır */ }
+    // Kurallar sayfasından "Ana ekranda yeniden incele" ile gelindiyse: soru, ihale tipi ve konu hazır gelir.
+    const incoming = new URLSearchParams(location.search);
+    if (incoming.has("question")) {
+      if ([...scopeEl.options].some((o) => o.value === incoming.get("scope"))) scopeEl.value = incoming.get("scope");
+      if ([...topicEl.options].some((o) => o.value === incoming.get("topic"))) topicEl.value = incoming.get("topic");
+      questionEl.value = incoming.get("question");
+      history.replaceState(null, "", "/");
+      try { sessionStorage.removeItem("kodAnalistRun"); } catch { }   // eski inceleme yerine bu soru gösterilsin
+      setTimeout(() => questionEl.focus(), 0);
+    }
     renderModes(data.modes || []);
     if (catalogEnabled) loadCatalog();   // katalog listeden önce yüklendiyse seçime göre yenile
     resumeSavedRun();
@@ -457,6 +476,7 @@
       <div class="catalog-top">
         <h2 id="catalogTitle">Onaylı kurallar</h2>
         <input id="catalogSearch" type="search" placeholder="Onaylı kurallarda ara (soru, cevap, not)…" autocomplete="off">
+        <a class="catalog-all" id="catalogAllLink" href="/rules">Tümünü gör →</a>
       </div>
       <div id="catalogBody"></div>`;
     document.getElementById("catalogSearch").addEventListener("input", () => {
@@ -488,7 +508,18 @@
 
   // Seçili ihale tipi / konudaki onaylı kurallar; arama kutusu doluysa metin araması yapılır.
   // Model çağrılmaz; tıklanınca anında açılır.
+  function updateRulesLinks() {
+    const q = new URLSearchParams();
+    if (scopeEl.value) q.set("scope", scopeEl.value);
+    if (topicEl.value) q.set("topic", topicEl.value);
+    const term = document.getElementById("catalogSearch")?.value.trim();
+    if (term) q.set("q", term);
+    const link = document.getElementById("catalogAllLink");
+    if (link) link.href = "/rules" + (q.toString() ? "?" + q : "");
+  }
+
   async function loadCatalog() {
+    updateRulesLinks();
     if (!catalogEnabled) { catalogEl.innerHTML = ""; return; }
     ensureCatalogShell();
     const titleEl = document.getElementById("catalogTitle");

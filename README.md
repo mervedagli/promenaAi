@@ -286,6 +286,18 @@ Hızlı modda üretilip onaylanan cevaplar katalogda **"doğrulanmamış"** olar
   **"kod değişti"** olarak işaretlenir ve hangi metodun değiştiği gösterilir. Bu kontrol model kullanmaz.
   Güncel sonuç için kod haritasını (`KodHaritasi build`) repolar güncellendikten sonra yeniden üretin.
 
+### Onaylı kurallar sayfası (`/rules`)
+
+Ana ekranın üst menüsünden (**Onaylı kurallar**) ya da katalog panelindeki **Tümünü gör** bağlantısından açılır.
+Model kullanmaz (`GET /api/catalog/browse`, `CatalogBrowse.cs`).
+
+- Arama: soru, cevap, not ve onaylayan adında; cevapta bulunan eşleşmeler alıntıyla gösterilir.
+- Filtreler: ihale tipi, konu, durum (güncel / kod değişti), doğrulama, onaylayan; sıralama (en yeni / en eski / soru A-Z).
+- Üstteki sayılar (toplam, güncel, kod değişti, doğrulanmamış) tıklanınca filtre olur. Sayfalama: 10 / 20 / 50 / 100.
+- Kurala tıklayınca cevap, not ve (varsa) değişen metotlar açılır. **Ana ekranda yeniden incele** soruyu, ihale tipini ve
+  konuyu ana ekrana hazır doldurur. **Bağlantıyı kopyala** o kuralı açık gösteren bağlantı verir.
+- Filtreler adres çubuğunda tutulur (ör. `/rules?scope=aggregated&status=changed`); bağlantı paylaşılabilir.
+
 ### Kurulum
 
 1. Azure Portal'da **Azure Cosmos DB for NoSQL** hesabı oluşturun (pilot için "Serverless" kapasite modu yeterli).

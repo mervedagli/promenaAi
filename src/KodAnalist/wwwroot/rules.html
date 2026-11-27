@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onaylı kurallar · Promena Rehberi</title>
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <script>
+    // Ana ekrandaki tema seçimi burada da geçerli (sayfa çizilmeden uygulanır).
+    try {
+      const t = localStorage.getItem("kodAnalistTheme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch { /* sistem teması */ }
+  </script>
+  <script src="lib/marked.min.js"></script>
+  <script src="lib/purify.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085;
+      --border: #e3e6eb; --accent: #2f5bd3; --accent-text: #ffffff;
+      --code-bg: #f1f3f6; --error: #b42318; --error-bg: #fef3f2;
+      --ok: #067647; --warn: #b54708;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #98a2b3;
+        --border: #2c323c; --accent: #6b8ff0; --accent-text: #0d1117;
+        --code-bg: #252a33; --error: #fda29b; --error-bg: #3a1a17;
+        --ok: #75e0a7; --warn: #fdb022;
+        color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #98a2b3;
+      --border: #2c323c; --accent: #6b8ff0; --accent-text: #0d1117;
+      --code-bg: #252a33; --error: #fda29b; --error-bg: #3a1a17;
+      --ok: #75e0a7; --warn: #fdb022;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+    a { color: var(--accent); }
+
+    /* Üst bar (ana ekranla aynı) */
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+    .brand { display: flex; align-items: center; gap: 6px; --brand-text: #3f464b; text-decoration: none; }
+    .brand h1 { margin: 0; font-weight: 500; font-size: 19px; line-height: 1; padding-top: 2px; color: var(--brand-text); }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .logo { height: 34px; width: auto; display: block; }
+    .logo-dark { display: none; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .logo-light { display: none; }
+      :root:not([data-theme="light"]) .logo-dark { display: block; }
+      :root:not([data-theme="light"]) .brand { --brand-text: #dbdbdf; }
+    }
+    :root[data-theme="dark"] .logo-light { display: none; }
+    :root[data-theme="dark"] .logo-dark { display: block; }
+    :root[data-theme="dark"] .brand { --brand-text: #dbdbdf; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .top-nav { display: flex; gap: 4px; }
+    .top-nav a { padding: 5px 10px; border-radius: 8px; font-size: 13px; color: var(--muted); text-decoration: none; }
+    .top-nav a:hover { color: var(--text); background: var(--code-bg); }
+    .top-nav a[aria-current="page"] { color: var(--text); font-weight: 600; background: var(--code-bg); }
+    .user-box { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+    .user-box[hidden] { display: none; }
+    .user-box .avatar { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: 12px; }
+    .user-box .name { color: var(--text); font-weight: 500; }
+    .user-box a { color: var(--muted); }
+    .theme-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+    .theme-switch button { background: transparent; color: var(--muted); border: 0; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+    .theme-switch button + button { border-left: 1px solid var(--border); }
+    .theme-switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+    .page-head { margin: 22px 0 16px; }
+    .page-head h2 { font-size: 22px; margin: 0 0 4px; }
+    .page-head p { color: var(--muted); margin: 0; }
+
+    /* Sayılar (tıklanınca filtre) */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .stat { text-align: left; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+    .stat:hover { border-color: var(--accent); }
+    .stat[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .stat .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .stat .k { font-size: 12px; color: var(--muted); }
+    .stat.ok .v { color: var(--ok); }
+    .stat.warn .v { color: var(--warn); }
+
+    /* Filtreler */
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 12px; align-items: end; }
+    .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .filters .search { grid-column: 1 / -1; }
+    input, select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; width: 100%; }
+    input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 0; }
+    .filter-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+    button.link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
+
+    /* Liste */
+    .list { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+    .rule { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+    .rule-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 12px 16px; cursor: pointer; width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; }
+    .rule-head:hover .q { color: var(--accent); }
+    .rule .q { font-weight: 600; word-break: break-word; }
+    .rule .meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .rule .snippet { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .rule mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+    .rule .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--border); }
+    .badge.ok { color: var(--ok); border-color: var(--ok); }
+    .badge.stale { color: var(--warn); border-color: var(--warn); }
+    .badge.info { color: var(--muted); }
+    .rule-body { border-top: 1px solid var(--border); padding: 4px 16px 16px; }
+    .rule-body h1, .rule-body h2, .rule-body h3 { line-height: 1.3; margin: 1em 0 .4em; }
+    .rule-body h1 { font-size: 19px; } .rule-body h2 { font-size: 17px; } .rule-body h3 { font-size: 15px; }
+    .rule-body code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; word-break: break-word; }
+    .rule-body table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+    .rule-body th, .rule-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+    .rule-body details.tech { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 13px; color: var(--muted); }
+    .rule-body details.tech summary { cursor: pointer; font-weight: 600; }
+    .rule-info { font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+    .rule-info ul { margin: 4px 0 0; padding-left: 20px; color: var(--warn); }
+    .rule-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .btn { display: inline-block; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 7px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+
+    .empty, .error { text-align: center; padding: 28px 16px; color: var(--muted); background: var(--panel); border: 1px dashed var(--border); border-radius: 10px; margin-top: 14px; }
+    .error { color: var(--error); background: var(--error-bg); border-style: solid; border-color: transparent; }
+
+    /* Sayfalama */
+    .pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; font-size: 13px; color: var(--muted); }
+    .pages { display: flex; gap: 4px; flex-wrap: wrap; }
+    .pages button { min-width: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+    .pages button[aria-current="page"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+    .pages button:disabled { opacity: .45; cursor: default; }
+    .pages .gap { padding: 5px 4px; }
+    .pager select { width: auto; padding: 4px 8px; font-size: 13px; }
+    .loading { opacity: .55; transition: opacity .1s; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="topbar">
+    <a class="brand" href="/" title="Soru sor">
+      <img class="logo logo-light" src="img/promena-logo.png" alt="Promena" width="106" height="34">
+      <img class="logo logo-dark" src="img/promena-logo-dark.png" alt="Promena" width="106" height="34">
+      <h1><span class="visually-hidden">Promena </span>Rehberi</h1>
+    </a>
+    <div class="topbar-right">
+      <nav class="top-nav" aria-label="Sayfalar">
+        <a href="/">Soru sor</a>
+        <a href="/rules" aria-current="page">Onaylı kurallar</a>
+      </nav>
+      <div id="userBox" class="user-box" hidden></div>
+      <div class="theme-switch" role="group" aria-label="Tema">
+        <button type="button" data-theme-choice="system" title="İşletim sisteminin ayarını kullan">Sistem</button>
+        <button type="button" data-theme-choice="light">Açık</button>
+        <button type="button" data-theme-choice="dark">Koyu</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-head">
+    <h2>Onaylı kurallar</h2>
+    <p>Analistlerin kontrol edip onayladığı cevaplar. Model çalışmaz; tıklayınca anında açılır.</p>
+  </div>
+
+  <div class="stats" id="stats">
+    <button type="button" class="stat" data-stat="all"><div class="v" id="cTotal">–</div><div class="k">Toplam</div></button>
+    <button type="button" class="stat ok" data-stat="uptodate"><div class="v" id="cUp">–</div><div class="k">Güncel</div></button>
+    <button type="button" class="stat warn" data-stat="changed"><div class="v" id="cChanged">–</div><div class="k">Kod değişti: yeniden kontrol</div></button>
+    <button type="button" class="stat warn" data-stat="unverified"><div class="v" id="cUnverified">–</div><div class="k">Doğrulanmamış (Hızlı mod)</div></button>
+  </div>
+
+  <div class="panel">
+    <div class="filters">
+      <label class="search">Ara
+        <input id="q" type="search" placeholder="Soru, cevap, not veya onaylayan adında ara…" autocomplete="off">
+      </label>
+      <label>İhale tipi <select id="scope"><option value="">Tümü</option></select></label>
+      <label>Konu <select id="topic"><option value="">Tümü</option></select></label>
+      <label>Durum
+        <select id="status"><option value="">Tümü</option><option value="uptodate">Güncel</option><option value="changed">Kod değişti</option></select>
+      </label>
+      <label>Doğrulama
+        <select id="verified"><option value="">Tümü</option><option value="yes">Doğrulanmış</option><option value="no">Doğrulanmamış</option></select>
+      </label>
+      <label>Onaylayan <select id="approvedBy"><option value="">Tümü</option></select></label>
+      <label>Sıralama
+        <select id="sort"><option value="newest">En yeni onay</option><option value="oldest">En eski onay</option><option value="question">Soru (A → Z)</option></select>
+      </label>
+    </div>
+    <div class="filter-foot">
+      <span id="resultInfo" aria-live="polite"></span>
+      <button type="button" class="link" id="clearBtn">Filtreleri temizle</button>
+    </div>
+  </div>
+
+  <div id="list" class="list"></div>
+  <div class="pager" id="pager" hidden>
+    <div class="pages" id="pages"></div>
+    <label>Sayfa başına
+      <select id="pageSize"><option>10</option><option selected>20</option><option>50</option><option>100</option></select>
+    </label>
+  </div>
+</main>
+
+<script>
+  // Oturum süresi dolarsa giriş ekranına dön.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => { const r = await nativeFetch(...args); if (r.status === 401) location.href = "/login"; return r; };
+
+  function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+  function formatDate(iso) { try { return new Date(iso).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" }); } catch { return iso; } }
+
+  // ---- Tema ve kullanıcı (ana ekranla aynı) ----
+  (function initThemeSwitch() {
+    const buttons = document.querySelectorAll("[data-theme-choice]");
+    function apply(choice) {
+      if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
+      else delete document.documentElement.dataset.theme;
+      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
+      try { if (choice === "system") localStorage.removeItem("kodAnalistTheme"); else localStorage.setItem("kodAnalistTheme", choice); } catch { }
+    }
+    for (const b of buttons) b.addEventListener("click", () => apply(b.dataset.themeChoice));
+    apply(document.documentElement.dataset.theme || "system");
+  })();
+  fetch("/api/me").then((r) => (r.ok ? r.json() : null)).then((me) => {
+    if (!me?.authEnabled || !me.signedIn) return;
+    const box = document.getElementById("userBox");
+    const initials = (me.name || me.email || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toLocaleUpperCase("tr-TR");
+    box.innerHTML = `<span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>` +
+      `<span class="name" title="${escapeHtml(me.email || "")}">${escapeHtml(me.name || me.email)}</span><a href="/auth/logout">Çıkış</a>`;
+    box.hidden = false;
+  }).catch(() => { });
+
+  // ---- Durum: filtreler adres çubuğunda tutulur (bağlantı paylaşılabilir) ----
+  const el = (id) => document.getElementById(id);
+  const fields = ["q", "scope", "topic", "status", "verified", "approvedBy", "sort", "pageSize"];
+  const params = new URLSearchParams(location.search);
+  let page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
+  let openKey = params.get("open");   // "ihaleTipi|kayitId": sayfa açılınca bu kural açık gelsin
+  const scopeLabels = {}, topicLabels = {};
+
+  function currentQuery() {
+    const q = new URLSearchParams();
+    for (const f of fields) {
+      const v = el(f).value.trim();
+      if (v && !(f === "sort" && v === "newest") && !(f === "pageSize" && v === "20")) q.set(f, v);
+    }
+    if (page > 1) q.set("page", String(page));
+    return q;
+  }
+
+  function syncUrl() {
+    const q = currentQuery();
+    if (openKey) q.set("open", openKey);
+    history.replaceState(null, "", "/rules" + (q.toString() ? "?" + q : ""));
+  }
+
+  // ---- Arama vurgusu ve cevap biçimi ----
+  function highlight(text, query) {
+    let html = escapeHtml(text);
+    for (const t of query.toLocaleLowerCase("tr-TR").split(/\s+/).filter((x) => x.length > 1)) {
+      html = html.replace(new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"), (m) => `<mark>${m}</mark>`);
+    }
+    return html;
+  }
+  function renderMarkdown(md) {
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") return `<div style="white-space:pre-wrap">${escapeHtml(md)}</div>`;
+    return DOMPurify.sanitize(marked.parse(md));
+  }
+  const TECH_HEADING = /^##\s+Teknik dayanaklar.*$/m;
+  function renderAnswer(md) {
+    const m = md.match(TECH_HEADING);
+    if (!m) return renderMarkdown(md);
+    return renderMarkdown(md.slice(0, m.index).trim()) +
+      `<details class="tech"><summary>Teknik dayanaklar (geliştiriciler için)</summary>${renderMarkdown(md.slice(m.index + m[0].length).trim())}</details>`;
+  }
+
+  // ---- Liste ----
+  let requestNo = 0;
+  async function load() {
+    syncUrl();
+    const my = ++requestNo;
+    el("list").classList.add("loading");
+    const q = currentQuery(); q.set("page", String(page));
+    let res, data;
+    try {
+      res = await fetch("/api/catalog/browse?" + q);
+      data = await res.json();
+    } catch {
+      if (my !== requestNo) return;
+      showError("Kurallar yüklenemedi. Bağlantınızı kontrol edip sayfayı yenileyin.");
+      return;
+    }
+    if (my !== requestNo) return;   // daha yeni bir istek var
+    el("list").classList.remove("loading");
+    if (!res.ok) { showError(data.error || "Kurallar yüklenemedi."); return; }
+    page = data.page;
+    syncUrl();
+    renderStats(data.counts);
+    renderApprovers(data.approvers);
+    renderList(data);
+    renderPager(data);
+  }
+
+  function showError(text) {
+    el("list").classList.remove("loading");
+    el("list").innerHTML = `<div class="error">${escapeHtml(text)}</div>`;
+    el("pager").hidden = true;
+    el("resultInfo").textContent = "";
+  }
+
+  function renderStats(c) {
+    el("cTotal").textContent = c.total.toLocaleString("tr-TR");
+    el("cUp").textContent = c.upToDate.toLocaleString("tr-TR");
+    el("cChanged").textContent = c.changed.toLocaleString("tr-TR");
+    el("cUnverified").textContent = c.unverified.toLocaleString("tr-TR");
+    const active = el("status").value === "uptodate" ? "uptodate" : el("status").value === "changed" ? "changed"
+      : el("verified").value === "no" ? "unverified" : (!el("status").value && !el("verified").value ? "all" : "");
+    for (const b of document.querySelectorAll("[data-stat]")) b.setAttribute("aria-pressed", String(b.dataset.stat === active));
+  }
+
+  function renderApprovers(list) {
+    const sel = el("approvedBy"), cur = sel.value;
+    sel.innerHTML = '<option value="">Tümü</option>' + list.map((a) => `<option>${escapeHtml(a)}</option>`).join("");
+    if (cur && !list.some((a) => a.toLowerCase() === cur.toLowerCase())) sel.add(new Option(cur, cur));
+    sel.value = cur;
+  }
+
+  function renderList(data) {
+    const query = el("q").value.trim();
+    const from = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
+    const to = Math.min(data.total, data.page * data.pageSize);
+    el("resultInfo").textContent = data.total === 0 ? "Sonuç yok" : `${data.total.toLocaleString("tr-TR")} kuraldan ${from}–${to} gösteriliyor`;
+    if (data.items.length === 0) {
+      el("list").innerHTML = `<div class="empty">${query || hasFilters()
+        ? "Bu arama ve filtrelerle eşleşen onaylı kural yok. Filtreleri temizleyip tekrar deneyin."
+        : "Katalogda henüz onaylı kural yok. Ana ekranda soru sorup cevabı onayladığınızda burada görünür."}</div>`;
+      return;
+    }
+    el("list").innerHTML = "";
+    for (const e of data.items) {
+      const key = `${e.scopeId}|${e.id}`;
+      const div = document.createElement("div");
+      div.className = "rule";
+      div.dataset.key = key;
+      const where = [scopeLabels[e.scopeId] || (e.scopeId === "genel" ? "Genel" : e.scopeId), topicLabels[e.topicId] || e.topicId].filter(Boolean).join(" · ");
+      const badges = (e.upToDate ? '<span class="badge ok">güncel</span>' : '<span class="badge stale">kod değişti</span>') +
+        (e.isVerified ? "" : '<span class="badge stale">doğrulanmamış</span>');
+      div.innerHTML = `<button type="button" class="rule-head" aria-expanded="false">
+          <div><div class="q">${query ? highlight(e.question, query) : escapeHtml(e.question)}</div>
+            <div class="meta">${escapeHtml(where)} · ${escapeHtml(e.approvedBy)} · ${formatDate(e.approvedAt)}</div>
+            ${e.snippet ? `<div class="snippet">${highlight(e.snippet, query)}</div>` : ""}</div>
+          <div class="badges">${badges}</div></button>`;
+      div.querySelector(".rule-head").addEventListener("click", () => toggle(div, e));
+      el("list").appendChild(div);
+      if (openKey === key) toggle(div, e);
+    }
+  }
+
+  async function toggle(div, e) {
+    const head = div.querySelector(".rule-head");
+    const body = div.querySelector(".rule-body");
+    if (body) { body.remove(); head.setAttribute("aria-expanded", "false"); if (openKey === div.dataset.key) { openKey = null; syncUrl(); } return; }
+    head.setAttribute("aria-expanded", "true");
+    openKey = div.dataset.key; syncUrl();
+    const b = document.createElement("div");
+    b.className = "rule-body";
+    b.innerHTML = '<p class="rule-info">Yükleniyor…</p>';
+    div.appendChild(b);
+    try {
+      const res = await fetch(`/api/catalog/${encodeURIComponent(e.scopeId)}/${encodeURIComponent(e.id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.status);
+      const x = data.entry;
+      const status = data.upToDate ? "Dayandığı kod onaydan beri değişmedi."
+        : `Dayandığı kod değişti; yeniden kontrol edilmeli:<ul>${data.changes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`;
+      const ask = new URLSearchParams({ question: x.question, scope: x.scopeId === "genel" ? "" : x.scopeId, topic: x.topicId || "" });
+      const share = new URL(location.href); share.searchParams.set("open", div.dataset.key);
+      b.innerHTML = `<div class="rule-info">${status}${x.note ? `<div><strong>Not:</strong> ${escapeHtml(x.note)}</div>` : ""}</div>` +
+        renderAnswer(x.answer) +
+        `<div class="rule-actions"><a class="btn${data.upToDate ? " secondary" : ""}" href="/?${ask}">Ana ekranda yeniden incele</a>` +
+        `<button type="button" class="btn secondary" data-copy="${escapeHtml(share.toString())}">Bağlantıyı kopyala</button></div>`;
+      b.querySelector("[data-copy]").addEventListener("click", async (ev) => {
+        try { await navigator.clipboard.writeText(ev.target.dataset.copy); ev.target.textContent = "Kopyalandı"; }
+        catch { prompt("Bağlantıyı kopyalayın:", ev.target.dataset.copy); }
+      });
+    } catch (err) {
+      b.innerHTML = `<p class="rule-info" style="color:var(--error)">Kural açılamadı: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function renderPager(data) {
+    el("pager").hidden = data.total === 0;
+    const pages = el("pages");
+    pages.innerHTML = "";
+    const add = (label, target, opts = {}) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      if (opts.current) b.setAttribute("aria-current", "page");
+      if (opts.disabled) b.disabled = true;
+      if (opts.aria) b.setAttribute("aria-label", opts.aria);
+      b.addEventListener("click", () => { page = target; openKey = null; load(); window.scrollTo({ top: 0, behavior: "smooth" }); });
+      pages.appendChild(b);
+    };
+    const n = data.totalPages, p = data.page;
+    add("‹", p - 1, { disabled: p <= 1, aria: "Önceki sayfa" });
+    const shown = new Set([1, n, p - 1, p, p + 1].filter((x) => x >= 1 && x <= n));
+    let last = 0;
+    for (const x of [...shown].sort((a, b) => a - b)) {
+      if (x - last > 1) { const s = document.createElement("span"); s.className = "gap"; s.textContent = "…"; pages.appendChild(s); }
+      add(String(x), x, { current: x === p });
+      last = x;
+    }
+    add("›", p + 1, { disabled: p >= n, aria: "Sonraki sayfa" });
+  }
+
+  function hasFilters() { return ["scope", "topic", "status", "verified", "approvedBy"].some((f) => el(f).value); }
+
+  // ---- Olaylar ----
+  let searchTimer = null;
+  el("q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page = 1; openKey = null; load(); }, 300); });
+  el("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(searchTimer); page = 1; load(); } });
+  for (const f of ["scope", "topic", "status", "verified", "approvedBy", "sort", "pageSize"])
+    el(f).addEventListener("change", () => { page = 1; openKey = null; load(); });
+  el("clearBtn").addEventListener("click", () => {
+    for (const f of ["q", "scope", "topic", "status", "verified", "approvedBy"]) el(f).value = "";
+    el("sort").value = "newest"; page = 1; openKey = null; load();
+  });
+  for (const b of document.querySelectorAll("[data-stat]")) b.addEventListener("click", () => {
+    const s = b.dataset.stat;
+    el("status").value = s === "uptodate" ? "uptodate" : s === "changed" ? "changed" : "";
+    el("verified").value = s === "unverified" ? "no" : "";
+    page = 1; openKey = null; load();
+  });
+
+  // ---- Başlangıç: listeler, adres çubuğundaki filtreler, ilk yükleme ----
+  fetch("/api/scopes").then((r) => r.json()).then((d) => {
+    for (const s of d.scopes) { el("scope").add(new Option(s.label, s.id)); scopeLabels[s.id] = s.label; }
+    for (const t of d.topics) { el("topic").add(new Option(t.label, t.id)); topicLabels[t.id] = t.label; }
+  }).catch(() => { }).finally(() => {
+    for (const f of fields) {
+      const v = params.get(f);
+      if (v == null) continue;
+      if (el(f).tagName === "SELECT" && f !== "approvedBy" && ![...el(f).options].some((o) => o.value === v)) continue;
+      if (f === "approvedBy") el(f).add(new Option(v, v));
+      el(f).value = v;
+    }
+    load();
+  });
+</script>
+</body>
+</html>

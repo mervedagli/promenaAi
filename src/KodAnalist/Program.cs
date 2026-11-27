@@ -172,6 +172,28 @@ app.MapGet("/api/catalog", async (string? scope, string? topic, CatalogService c
     }
 });
 
+// "Onaylı kurallar" sayfası: arama, filtre, sıralama ve sayfalama (model kullanılmaz).
+app.MapGet("/api/catalog/browse", async ([AsParameters] CatalogBrowseQuery query, CatalogService catalog, SourceTracker tracker,
+    ILogger<Program> logger, CancellationToken ct) =>
+{
+    if (!catalog.IsConfigured) return Results.Json(new { error = "Katalog yapılandırılmadı." }, statusCode: 503);
+    try
+    {
+        // İhale tipi seçiliyse yalnızca o bölüm okunur; değilse tüm katalog.
+        var entries = await catalog.ListAsync(string.IsNullOrEmpty(query.Scope) ? null : query.Scope, null, ct);
+        return Results.Json(CatalogBrowser.Browse(entries.Select(e => (e, tracker.Check(e))), query));
+    }
+    catch (Exception ex) when (ex is CosmosException or InvalidOperationException or Azure.Identity.AuthenticationFailedException)
+    {
+        logger.LogError(ex, "Katalog listelenemedi");
+        return Results.Json(new { error = "Kataloğa erişilemedi. Ayrıntılar sunucu loglarında." }, statusCode: 502);
+    }
+});
+
+// Onaylı kurallar sayfası (giriş açıksa girişe tabidir).
+app.MapGet("/rules", (IWebHostEnvironment env) =>
+    Results.File(Path.Combine(env.WebRootPath, "rules.html"), "text/html; charset=utf-8"));
+
 app.MapGet("/api/catalog/{scopeId}/{id}", async (string scopeId, string id, CatalogService catalog, SourceTracker tracker,
     ILogger<Program> logger, CancellationToken ct) =>
 {
